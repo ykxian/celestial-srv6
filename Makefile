@@ -44,7 +44,7 @@ pkg/ebpfem/edt_x86_bpfel.go pkg/ebpfem/edt_x86_bpfel.o: pkg/ebpfem/ebpfem.go pkg
 	@go generate ./pkg/ebpfem
 
 celestial.bin: go.mod go.sum celestial.go ${GO_FILES} ## build go binary
-	GOOS=${OS} GOARCH=${ARCH} go build -o celestial.bin .
+	GOOS=${OS} GOARCH=${ARCH} go build -buildvcs=false -o celestial.bin .
 
 celestial-make: compile.Dockerfile ## build the compile container
 	@docker build --platform ${OS}/${ARCH} -f $< -t $@ .

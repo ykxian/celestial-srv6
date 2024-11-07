@@ -17,6 +17,8 @@ type edtHandleKbpsDelay struct {
 	DelayUs          uint32
 }
 
+type edtIn6Addr struct{ In6U struct{ U6Addr8 [16]uint8 } }
+
 // loadEdt returns the embedded CollectionSpec for edt.
 func loadEdt() (*ebpf.CollectionSpec, error) {
 	reader := bytes.NewReader(_EdtBytes)
@@ -65,8 +67,10 @@ type edtProgramSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type edtMapSpecs struct {
-	IP_HANDLE_KBPS_DELAY *ebpf.MapSpec `ebpf:"IP_HANDLE_KBPS_DELAY"`
-	FlowMap              *ebpf.MapSpec `ebpf:"flow_map"`
+	IPV6HANDLE_KBPS_DELAY *ebpf.MapSpec `ebpf:"IPV6_HANDLE_KBPS_DELAY"`
+	IP_HANDLE_KBPS_DELAY  *ebpf.MapSpec `ebpf:"IP_HANDLE_KBPS_DELAY"`
+	Ipv4FlowMap           *ebpf.MapSpec `ebpf:"ipv4_flow_map"`
+	Ipv6FlowMap           *ebpf.MapSpec `ebpf:"ipv6_flow_map"`
 }
 
 // edtObjects contains all objects after they have been loaded into the kernel.
@@ -88,14 +92,18 @@ func (o *edtObjects) Close() error {
 //
 // It can be passed to loadEdtObjects or ebpf.CollectionSpec.LoadAndAssign.
 type edtMaps struct {
-	IP_HANDLE_KBPS_DELAY *ebpf.Map `ebpf:"IP_HANDLE_KBPS_DELAY"`
-	FlowMap              *ebpf.Map `ebpf:"flow_map"`
+	IPV6HANDLE_KBPS_DELAY *ebpf.Map `ebpf:"IPV6_HANDLE_KBPS_DELAY"`
+	IP_HANDLE_KBPS_DELAY  *ebpf.Map `ebpf:"IP_HANDLE_KBPS_DELAY"`
+	Ipv4FlowMap           *ebpf.Map `ebpf:"ipv4_flow_map"`
+	Ipv6FlowMap           *ebpf.Map `ebpf:"ipv6_flow_map"`
 }
 
 func (m *edtMaps) Close() error {
 	return _EdtClose(
+		m.IPV6HANDLE_KBPS_DELAY,
 		m.IP_HANDLE_KBPS_DELAY,
-		m.FlowMap,
+		m.Ipv4FlowMap,
+		m.Ipv6FlowMap,
 	)
 }
 

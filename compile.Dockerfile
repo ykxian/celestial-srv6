@@ -26,6 +26,7 @@ ARG GO_VERSION=1.22.1
 ARG PROTOC_GEN_GO_VERSION=1.31.0
 ARG PROTOC_GEN_GO_GRPC_VERSION=1.3
 
+RUN sed -i 's@deb.debian.org@mirrors.tuna.tsinghua.edu.cn@g' /etc/apt/sources.list.d/debian.sources
 RUN apt-get update && apt-get install -y \
     --no-install-recommends \
     --no-install-suggests \
@@ -51,7 +52,7 @@ RUN wget https://github.com/protocolbuffers/protobuf/releases/download/v${LIBPRO
     chmod +x /usr/local/protoc/bin/* && \
     ln -s /usr/local/protoc/bin/protoc /usr/local/bin/protoc
 
-RUN wget https://go.dev/dl/go${GO_VERSION}.${OS}-${GO_ARCH}.tar.gz && \
+RUN wget https://golang.google.cn/dl/go${GO_VERSION}.${OS}-${GO_ARCH}.tar.gz && \
     rm -rf /usr/local/go && \
     tar -C /usr/local -xzf go${GO_VERSION}.${OS}-${GO_ARCH}.tar.gz && \
     echo 'export PATH="$PATH:/usr/local/go/bin"' >> /etc/profile && \
@@ -64,6 +65,7 @@ ENV PATH $PATH:/usr/local/go/bin
 ENV PATH $PATH:/root/go/bin
 ENV GOPATH /root/go
 ENV GOBIN /root/go/bin
+ENV GOPROXY https://goproxy.cn,direct
 
 RUN go install google.golang.org/protobuf/cmd/protoc-gen-go@v${PROTOC_GEN_GO_VERSION} && \
     go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v${PROTOC_GEN_GO_GRPC_VERSION}
@@ -71,7 +73,7 @@ RUN go install google.golang.org/protobuf/cmd/protoc-gen-go@v${PROTOC_GEN_GO_VER
 RUN python3 -m venv /venv
 ENV PATH="/venv/bin:$PATH"
 COPY requirements.txt requirements.txt
-RUN python3 -m pip install -r requirements.txt -U
+RUN python3 -m pip install -r requirements.txt -U -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 WORKDIR /celestial
 

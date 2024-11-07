@@ -24,6 +24,8 @@ ARG ALPINE_ARCH="x86_64"
 
 ARG ALPINE_VERSION="${ALPINE_VERSION_MAJOR}.${ALPINE_VERSION_MINOR}.${ALPINE_VERSION_PATCH}"
 
+RUN sed -i 's@deb.debian.org@mirrors.tuna.tsinghua.edu.cn@g' /etc/apt/sources.list.d/debian.sources
+
 RUN apt update && \
     apt install -y \
     wget \
@@ -32,7 +34,7 @@ RUN apt update && \
     rm -rf /var/lib/apt/lists/*
 
 RUN mkdir minirootfs
-RUN wget http://dl-cdn.alpinelinux.org/alpine/v${ALPINE_VERSION_MAJOR}.${ALPINE_VERSION_MINOR}/releases/${ALPINE_ARCH}/alpine-minirootfs-${ALPINE_VERSION}-${ALPINE_ARCH}.tar.gz && \
+RUN wget http://mirrors.tuna.tsinghua.edu.cn/alpine/v${ALPINE_VERSION_MAJOR}.${ALPINE_VERSION_MINOR}/releases/${ALPINE_ARCH}/alpine-minirootfs-${ALPINE_VERSION}-${ALPINE_ARCH}.tar.gz && \
     cd minirootfs && \
     tar xzf ../alpine-minirootfs-${ALPINE_VERSION}-${ALPINE_ARCH}.tar.gz && \
     cd .. && \
@@ -43,7 +45,7 @@ RUN wget http://dl-cdn.alpinelinux.org/alpine/v${ALPINE_VERSION_MAJOR}.${ALPINE_
 
 # install dependencies in minirootfs
 RUN cp /etc/resolv.conf ./rootfs/etc/resolv.conf && \
-    chroot ./rootfs/ apk -X "http://dl-5.alpinelinux.org/alpine/v${ALPINE_VERSION_MAJOR}.${ALPINE_VERSION_MINOR}/main" -U --allow-untrusted --root / --initdb add \
+    chroot ./rootfs/ apk -X "http://http://mirrors.tuna.tsinghua.edu.cn/alpine/v${ALPINE_VERSION_MAJOR}.${ALPINE_VERSION_MINOR}/main" -U --allow-untrusted --root / --initdb add \
     openrc \
     ca-certificates \
     alpine-base \
