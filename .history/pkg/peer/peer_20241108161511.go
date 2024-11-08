@@ -188,21 +188,14 @@ func (p *PeeringService) Route(network net.IPNet, host orchestrator.Host) error 
 	defer h.Unlock()
 	h.allowedNets = append(h.allowedNets, &network)
 
-	// 初始化 allowed-ips 列表，包括主 IPv4 和 IPv6 地址
+	// 更新 allowed-ips 列表
 	allowedCIDRs := h.wgAddr.String() + "/32"
 	if h.wgAddrV6 != nil {
 		allowedCIDRs += "," + h.wgAddrV6.String() + "/128"
 	}
 
-	// 遍历所有 allowedNets，添加 IPv4 和 IPv6 子网
 	for _, n := range h.allowedNets {
-		allowedCIDRs += "," + n.String() // IPv4 子网
-		// 将 IPv4 子网转换为 IPv6 并添加到 allowedCIDRs
-		ipv6Subnet, err := convertIPv4ToIPv6Subnet(*n)
-		if err != nil {
-			return errors.WithStack(err)
-		}
-		allowedCIDRs += "," + ipv6Subnet
+		allowedCIDRs += "," + n.String()
 	}
 
 	// 配置 WireGuard allowed-ips
@@ -213,7 +206,7 @@ func (p *PeeringService) Route(network net.IPNet, host orchestrator.Host) error 
 
 	// 删除旧的 IPv4 路由
 	cmd = exec.Command("ip", "route", "del", network.String())
-	_, _ = cmd.CombinedOutput() // 忽略删除错误
+	_, _ = cmd.CombinedOutput()
 
 	// 添加新的 IPv4 路由
 	cmd = exec.Command("ip", "route", "add", network.String(), "via", h.wgAddr.String(), "dev", p.wgInterface)
@@ -221,7 +214,7 @@ func (p *PeeringService) Route(network net.IPNet, host orchestrator.Host) error 
 		return errors.Wrapf(err, "%#v: output: %s", cmd.Args, out)
 	}
 
-	// 将当前 IPv4 子网转换为 IPv6 子网
+	// 将 IPv4 子网转换为 IPv6 子网，并添加 IPv6 路由
 	ipv6Subnet, err := convertIPv4ToIPv6Subnet(network)
 	if err != nil {
 		return errors.WithStack(err)
@@ -229,9 +222,8 @@ func (p *PeeringService) Route(network net.IPNet, host orchestrator.Host) error 
 
 	// 删除旧的 IPv6 路由
 	cmd = exec.Command("ip", "-6", "route", "del", ipv6Subnet)
-	_, _ = cmd.CombinedOutput() // 忽略删除错误
+	_, _ = cmd.CombinedOutput()
 
-	// 添加新的 IPv6 路由
 	cmd = exec.Command("ip", "-6", "route", "add", ipv6Subnet, "via", h.wgAddrV6.String(), "dev", p.wgInterface)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return errors.Wrapf(err, "%#v: output: %s", cmd.Args, out)

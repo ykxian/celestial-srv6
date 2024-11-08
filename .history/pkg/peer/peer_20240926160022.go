@@ -42,7 +42,6 @@ type HostInfo struct {
 type peer struct {
 	directAddr  net.IP
 	wgAddr      net.IP
-	wgAddrV6    net.IP // 新增 IPv6 地址
 	allowedNets []*net.IPNet
 	sync.Mutex  // can't have two goroutines modifying this at the same time
 
@@ -55,7 +54,6 @@ type peer struct {
 // PeeringService uses Wireguard to connect to other machines and route traffic to them.
 type PeeringService struct {
 	wgAddr      net.IP
-	wgAddrV6    net.IP // 新增 IPv6 地址
 	id          orchestrator.Host
 	mask        string
 	wgInterface string
@@ -123,46 +121,39 @@ func New(mask string, keypath string, wginterface string, port uint16) (*Peering
 }
 
 func (p *PeeringService) Register(host orchestrator.Host) (publickey string, listenaddr string, err error) {
-	wgaddr, err := getWGAddr(host, false) // IPv4 地址
-	if err != nil {
-		return "", "", errors.WithStack(err)
-	}
+	wgaddr, err := getWGAddr(host)
 
-	wgaddrV6, err := getWGAddr(host, true) // IPv6 地址
 	if err != nil {
 		return "", "", errors.WithStack(err)
 	}
 
 	p.wgAddr = wgaddr
-	p.wgAddrV6 = wgaddrV6
 	p.id = host
 
 	// ip link add [WGINTERFACE] type wireguard
 	cmd := exec.Command("ip", "link", "add", p.wgInterface, "type", "wireguard")
+
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "", "", errors.Wrapf(err, "%#v: output: %s", cmd.Args, out)
 	}
 
 	// ip addr add [OWN_WG_ADDRESS] dev [WGINTERFACE]
 	cmd = exec.Command("ip", "addr", "add", p.wgAddr.String()+p.mask, "dev", p.wgInterface)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return "", "", errors.Wrapf(err, "%#v: output: %s", cmd.Args, out)
-	}
 
-	// 添加 IPv6 地址
-	cmd = exec.Command("ip", "addr", "add", p.wgAddrV6.String()+"/64", "dev", p.wgInterface)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "", "", errors.Wrapf(err, "%#v: output: %s", cmd.Args, out)
 	}
 
 	// wg set [WGINTERFACE] private-key [PRIVATE_KEY_FILE] listen-port [WG_PORT]
 	cmd = exec.Command("wg", "set", p.wgInterface, "private-key", p.keyPath, "listen-port", strconv.Itoa(int(p.port)))
+
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "", "", errors.Wrapf(err, "%#v: output: %s", cmd.Args, out)
 	}
 
 	// ip link set [WGINTERFACE] up
 	cmd = exec.Command("ip", "link", "set", p.wgInterface, "up")
+
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "", "", errors.Wrapf(err, "%#v: output: %s", cmd.Args, out)
 	}
@@ -179,7 +170,9 @@ func (p *PeeringService) GetHostID() (uint8, error) {
 }
 
 func (p *PeeringService) Route(network net.IPNet, host orchestrator.Host) error {
+	// essentially, we just need to add the machine IP/Net to the list of allowed ips for this wireguard interface
 	h, ok := p.peers[host]
+
 	if !ok {
 		return errors.Errorf("unknown host %d", host)
 	}
@@ -188,75 +181,43 @@ func (p *PeeringService) Route(network net.IPNet, host orchestrator.Host) error 
 	defer h.Unlock()
 	h.allowedNets = append(h.allowedNets, &network)
 
-	// 初始化 allowed-ips 列表，包括主 IPv4 和 IPv6 地址
+	// update the list of allowed IPs
+
 	allowedCIDRs := h.wgAddr.String() + "/32"
-	if h.wgAddrV6 != nil {
-		allowedCIDRs += "," + h.wgAddrV6.String() + "/128"
-	}
 
-	// 遍历所有 allowedNets，添加 IPv4 和 IPv6 子网
 	for _, n := range h.allowedNets {
-		allowedCIDRs += "," + n.String() // IPv4 子网
-		// 将 IPv4 子网转换为 IPv6 并添加到 allowedCIDRs
-		ipv6Subnet, err := convertIPv4ToIPv6Subnet(*n)
-		if err != nil {
-			return errors.WithStack(err)
-		}
-		allowedCIDRs += "," + ipv6Subnet
+		allowedCIDRs += ","
+		allowedCIDRs += n.String()
 	}
 
-	// 配置 WireGuard allowed-ips
+	// wg set [WGINTERFACE] peer [PEER_PUBLICKEY] allowed-ips [PEER_WG_ADDR]/32,[MACHINE_1_NET],[MACHINE_2_NET],...
 	cmd := exec.Command("wg", "set", p.wgInterface, "peer", h.publicKey, "allowed-ips", allowedCIDRs)
+
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return errors.Wrapf(err, "%#v: output: %s", cmd.Args, out)
 	}
 
-	// 删除旧的 IPv4 路由
+	// ip route del [MACHINE_NETWORK]
+	// make sure there is no old route here: this can fail
 	cmd = exec.Command("ip", "route", "del", network.String())
-	_, _ = cmd.CombinedOutput() // 忽略删除错误
 
-	// 添加新的 IPv4 路由
+	_, _ = cmd.CombinedOutput()
+
+	// ip route add [MACHINE_NETWORK] via [REMOTE_WG_ADDR] dev [WGINTERFACE]
 	cmd = exec.Command("ip", "route", "add", network.String(), "via", h.wgAddr.String(), "dev", p.wgInterface)
+
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return errors.Wrapf(err, "%#v: output: %s", cmd.Args, out)
 	}
-
-	// 将当前 IPv4 子网转换为 IPv6 子网
-	ipv6Subnet, err := convertIPv4ToIPv6Subnet(network)
-	if err != nil {
-		return errors.WithStack(err)
-	}
-
-	// 删除旧的 IPv6 路由
-	cmd = exec.Command("ip", "-6", "route", "del", ipv6Subnet)
-	_, _ = cmd.CombinedOutput() // 忽略删除错误
-
-	// 添加新的 IPv6 路由
-	cmd = exec.Command("ip", "-6", "route", "add", ipv6Subnet, "via", h.wgAddrV6.String(), "dev", p.wgInterface)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return errors.Wrapf(err, "%#v: output: %s", cmd.Args, out)
-	}
-
 	return nil
 }
 
-func convertIPv4ToIPv6Subnet(ipv4Net net.IPNet) (string, error) {
-	ipv4 := ipv4Net.IP.To4()
-	if ipv4 == nil {
-		return "", errors.New("invalid IPv4 address")
-	}
-	return fmt.Sprintf("fd00::%x:%x:%x:%x/126", ipv4[0], ipv4[1], ipv4[2], ipv4[3]), nil
-}
-
-func getWGAddr(host orchestrator.Host, ipv6 bool) (net.IP, error) {
+func getWGAddr(host orchestrator.Host) (net.IP, error) {
 	if host > 253 {
 		return nil, errors.Errorf("index %d is larger than allowed 253", host)
 	}
-	if ipv6 {
-		// 使用 fd00::c0:a8:32:XX 前缀并嵌入 host 相关字节
-		return net.ParseIP(fmt.Sprintf("fd00::c0:a8:32:%x", 0x02+host)), nil
-	}
-	// 默认返回 IPv4 地址
+
+	// put into subnet 192.168.50.0/24
 	return net.IPv4(0xC0, 0xA8, 0x32, byte(0x02+host)), nil
 }
 
@@ -266,22 +227,20 @@ func (p *PeeringService) InitPeering(remotes map[orchestrator.Host]HostInfo) err
 			continue
 		}
 
-		remoteWgAddr, err := getWGAddr(remote, false) // IPv4 地址
-		if err != nil {
-			return errors.WithStack(err)
-		}
+		remoteWgAddr, err := getWGAddr(remote)
 
-		remoteWgAddrV6, err := getWGAddr(remote, true) // IPv6 地址
 		if err != nil {
 			return errors.WithStack(err)
 		}
 
 		addr, port, err := net.SplitHostPort(info.Addr)
+
 		if err != nil {
 			return errors.WithStack(err)
 		}
 
 		portNum, err := strconv.ParseUint(port, 10, 16)
+
 		if err != nil {
 			return errors.WithStack(err)
 		}
@@ -289,20 +248,21 @@ func (p *PeeringService) InitPeering(remotes map[orchestrator.Host]HostInfo) err
 		r := &peer{
 			directAddr:  net.ParseIP(addr),
 			wgAddr:      remoteWgAddr,
-			wgAddrV6:    remoteWgAddrV6,
 			allowedNets: []*net.IPNet{},
 			port:        uint16(portNum),
 			publicKey:   info.PublicKey,
 		}
 
-		// wg set [WGINTERFACE] peer [PEER_PUBLICKEY] allowed-ips [PEER_WG_ADDR]/32,[PEER_WG_ADDRV6]/128 endpoint [PEER_DIRECT_ADDR]:[WGPORT]
-		cmd := exec.Command("wg", "set", p.wgInterface, "peer", r.publicKey, "allowed-ips", r.wgAddr.String()+"/32,"+r.wgAddrV6.String()+"/128", "endpoint", net.JoinHostPort(r.directAddr.String(), port))
+		// wg set [WGINTERFACE] peer [PEER_PUBLICKEY] allowed-ips [PEER_WG_ADDR]/32 endpoint [PEER_DIRECT_ADDR]:[WGPORT]
+		cmd := exec.Command("wg", "set", p.wgInterface, "peer", r.publicKey, "allowed-ips", r.wgAddr.String()+"/32", "endpoint", net.JoinHostPort(r.directAddr.String(), port))
+
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return errors.Wrapf(err, "%#v: output: %s", cmd.Args, out)
 		}
 
 		// test latency to this peer
 		pinger, err := ping.NewPinger(r.directAddr.String())
+
 		if err != nil {
 			return errors.WithStack(err)
 		}
@@ -312,6 +272,7 @@ func (p *PeeringService) InitPeering(remotes map[orchestrator.Host]HostInfo) err
 		pinger.Timeout = 5 * time.Second
 
 		err = pinger.Run() // Blocks until finished.
+
 		if err != nil {
 			return errors.WithStack(err)
 		}
@@ -323,6 +284,7 @@ func (p *PeeringService) InitPeering(remotes map[orchestrator.Host]HostInfo) err
 		r.latency = uint64((stats.AvgRtt.Nanoseconds() / 1e3) / 2.0)
 
 		log.Debugf("Latency %dus", r.latency)
+
 		log.Infof("Determined a latency of %dus to host %s", r.latency, r.directAddr)
 
 		p.peers[remote] = r
@@ -332,8 +294,12 @@ func (p *PeeringService) InitPeering(remotes map[orchestrator.Host]HostInfo) err
 }
 
 func (p *PeeringService) Stop() error {
+
 	// ip link del [WGINTERFACE]
 	cmd := exec.Command("ip", "link", "del", p.wgInterface)
+
+	// errors are ok
+
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return errors.Wrapf(err, "%#v: output: %s", cmd.Args, out)
 	}
