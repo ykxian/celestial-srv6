@@ -109,7 +109,7 @@ def get_expected_latency(
         if "blocked" in data and data["blocked"]:
             return MAX_DELAY
 
-        return float(data["delay_us"]) / 1e3  # convert to ms
+        return float(data["delay"]) / 1e3  # convert to ms
 
     except Exception as e:
         print(

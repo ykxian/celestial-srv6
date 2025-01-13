@@ -22,11 +22,31 @@ import ping3  # type: ignore
 import typing
 import time
 import requests  # type: ignore
+import concurrent.futures
 
 MAX_DELAY = 1e7
 TERM_RED = "\033[91m"
 TERM_GREEN = "\033[92m"
 TERM_END = "\033[0m"
+
+def measure_latency_concurrently(targets: typing.List[typing.Dict[str, int]], gateway: str) -> typing.Dict[str, float]:
+    latencies = {}
+    
+    def ping_sat(sat_info: typing.Dict[str, int]):
+        sat_id = sat_info["sat"]
+        shell_id = sat_info["shell"]
+        act_latency = get_real_latency(sat_id, shell_id)
+        key = f"{shell_id}.{sat_id}"
+        return key, act_latency
+    
+    with concurrent.futures.ThreadPoolExecutor(max_workers=100) as executor:
+        # 并发执行 ping
+        results = executor.map(ping_sat, targets)
+        for key, act_latency in results:
+            latencies[key] = act_latency
+    
+    return latencies
+
 
 
 def get_id(gateway: str) -> str:
@@ -184,14 +204,21 @@ if __name__ == "__main__":
 
             targets.extend(get_sats_state(control_group, gateway))
 
+            # 将目标转换为字典列表
+            target_dicts = [{"shell": sat["shell"], "sat": sat["sat"]} for sat, _ in targets]
+
+            # 执行并发ping
+            latencies = measure_latency_concurrently(target_dicts, gateway)
+
             for sat, active in targets:
+                key = f"{sat['shell']}.{sat['sat']}"
+                act = latencies.get(key,MAX_DELAY)
+
                 expBef = (
                     get_expected_latency(id, sat["sat"], sat["shell"], gateway)
                     if active
                     else MAX_DELAY
                 )
-
-                act = get_real_latency(sat["sat"], sat["shell"])
 
                 expAft = (
                     get_expected_latency(id, sat["sat"], sat["shell"], gateway)

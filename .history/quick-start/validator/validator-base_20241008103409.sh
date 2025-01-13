@@ -49,6 +49,7 @@ PubkeyAuthentication yes
 " | tee -a /etc/ssh/sshd_config >/dev/null
 
 cp id_ed25519.pub /root/.ssh/authorized_keys
+cat /root/.ssh/authorized_keys
 
 # Add the python3 dependencies: request and ping3
 python3 -m pip install ping3 requests -i https://pypi.tuna.tsinghua.edu.cn/simple/
