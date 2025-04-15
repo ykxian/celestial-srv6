@@ -58,7 +58,7 @@ func (m *machine) createNetwork() error {
 	_ = removeNetworkDevice(m.network.tap, HOST_INTERFACE)
 
 	// create new network tap
-	err := createNetworkDevice(m.network.gateway,m.network.ipv6Gateway ,m.network.tap, HOST_INTERFACE)
+	err := createNetworkDevice(m.network.gateway, m.network.ipv6Gateway, m.network.tap, HOST_INTERFACE)
 
 	if err != nil {
 		return err
@@ -76,7 +76,7 @@ func (m *machine) removeNetwork() error {
 }
 
 func (m *machine) initialize() error {
-	
+
 	// create the network config for our firecracker vm
 	fcNetworkConfig := []firecracker.NetworkInterface{
 		{
@@ -168,6 +168,20 @@ func (m *machine) initialize() error {
 		bootparams += " " + param
 	}
 
+	// 在 MetricsPath 配置前添加：
+	metricsPath := filepath.Join(OUTPUTPATH, fmt.Sprintf("%s-metrics.log", m.name))
+
+	// 预先创建文件并设置权限
+	if f, err := os.OpenFile(metricsPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666); err == nil {
+		f.Close()
+		// 强制设置权限（防止 umask 影响）
+		if err := os.Chmod(metricsPath, 0666); err != nil {
+			log.Errorf("无法设置 metrics 文件权限: %v", err)
+		}
+	} else {
+		log.Errorf("无法创建 metrics 文件: %v", err)
+	}
+
 	vm, err := firecracker.NewMachine(context.Background(), firecracker.Config{
 		SocketPath:      socketPath,
 		KernelImagePath: path.Join(ROOTPATH, m.kernel),
@@ -190,6 +204,7 @@ func (m *machine) initialize() error {
 			MemSizeMib: firecracker.Int64(int64(m.ram)),
 			VcpuCount:  firecracker.Int64(int64(m.vcpucount)),
 		},
+		MetricsPath:       metricsPath, // 新增此行
 		LogLevel:          loglevel,
 		NetworkInterfaces: fcNetworkConfig,
 	}, firecrackerProcessRunner)
@@ -261,4 +276,3 @@ func getFirecrackerProcessRunner(socketPath string, outFile io.Writer, errFile i
 		WithStderr(errFile).
 		Build(context.Background())), nil
 }
-

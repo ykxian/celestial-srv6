@@ -9,6 +9,8 @@ TODO.md
 *.pem.pub
 .idea/
 .mypy_cache/
+.history/
+.vscode/
 *.bin
 
 ~$*
