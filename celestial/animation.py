@@ -102,6 +102,10 @@ ROUTE_PATH_OPACITY = 1.0  # 路径透明度
 ROUTE_PATH_WIDTH = 4  # 路径线宽
 ROUTE_PATH_ARROW_SIZE = 12  # 箭头大小
 
+# 路由更新相关常量
+ROUTE_MIN_UPDATE_INTERVAL = 2.0  # 路由最小更新间隔（秒）
+ROUTE_RESET_DURATION = 3.0  # 路由重置状态持续时间（秒）
+
 # SSH按钮相关常量
 INFO_PANEL_SSH_BTN_WIDTH = 80  # SSH按钮宽度
 INFO_PANEL_SSH_BTN_HEIGHT = 25  # SSH按钮高度
@@ -516,6 +520,10 @@ class Animation:
         gst_links: typing.List[
             typing.List[typing.Dict[str, typing.Union[float, int, bool]]]
         ] = init["gst_links"]
+        
+        # 初始化路由相关标志
+        self.route_reset = False
+        self.route_request_pending = False
 
 
         if "gst_names" in init:
@@ -571,6 +579,8 @@ class Animation:
         self.route_arrows_actors = []    # 路由路径箭头演员对象列表
         self.current_path_nodes = None   # 当前路径节点
         self.last_route_update = 0       # 上次路由更新的时间
+        self.route_request_pending = False  # 路由请求挂起标志
+        self.route_request_time = 0      # 路由请求发送时间，用于超时检测
 
         self.initialized = True  # 初始化完成标志
 
@@ -801,6 +811,37 @@ class Animation:
         """更新路由路径，确保路径随着卫星移动而更新"""
         
         try:
+            # 首先检查是否处于重置状态，如果是则不发送新请求
+            if hasattr(self, 'route_reset') and self.route_reset:
+                # 重置状态下直接返回，不处理任何路由请求
+                # 同时确保清除请求挂起标志，防止重置后的第一个step仍然发送请求
+                self.route_request_pending = False
+                # 清除当前路径显示，确保重置状态下不显示任何路径
+                if hasattr(self, 'route_path_actor') and self.route_path_actor:
+                    self.renderer.RemoveActor(self.route_path_actor)
+                    self.route_path_actor = None
+                # 清除当前路径节点，防止重置后仍然显示路径
+                if hasattr(self, 'current_path_nodes'):
+                    self.current_path_nodes = []
+                # 确保last_route_update设置为一个足够大的值，防止在重置后立即发送请求
+                self.last_route_update = float('inf')
+                
+                # 如果处于重置状态，检查是否已经过了足够的时间
+                if hasattr(self, 'reset_timer_start') and self.reset_timer_start is not None:
+                    if time.time() - self.reset_timer_start > ROUTE_RESET_DURATION:  # 使用常量
+                        self.route_reset = False
+                        self.reset_timer_start = None
+                        print("系统已恢复，可以继续使用路由功能")
+                        # 重置后立即更新last_route_update，防止立即发送新请求
+                        self.last_route_update = self.current_simulation_time
+                
+                # 重置状态下直接返回，不处理任何路由请求
+                return
+                
+            # 检查是否有请求正在处理中，如果是则不发送新请求
+            if hasattr(self, 'route_request_pending') and self.route_request_pending:
+                return
+                
             # 检查是否有活动路径
             if (hasattr(self, 'route_source_type') and self.route_source_type is not None and
                 hasattr(self, 'route_target_type') and self.route_target_type is not None):
@@ -811,16 +852,17 @@ class Animation:
                 # 2. 网络拓扑发生变化（通过last_animate与current_simulation_time比较）
                 # 3. 距离上次更新已经过去了足够长的时间（防止频繁请求）
                 current_time = time.time()
-                min_update_interval = 2.0  # 最小更新间隔（秒）
                 
-                if (hasattr(self, 'route_source_index') and self.route_source_index is not None and
+                # 确保在重置状态下不发送新请求，即使满足其他条件
+                if (not self.route_reset and
+                    hasattr(self, 'route_source_index') and self.route_source_index is not None and
                     hasattr(self, 'route_target_index') and self.route_target_index is not None and
                     (not hasattr(self, 'last_route_update') or 
                      self.last_route_update is None or 
                      # 检查是否有新的step事件（网络拓扑变化）且已经过了最小更新间隔
                      (self.last_route_update < self.last_animate and 
                       (not hasattr(self, 'last_route_request_time') or 
-                       current_time - getattr(self, 'last_route_request_time', 0) > min_update_interval)))):
+                       current_time - getattr(self, 'last_route_request_time', 0) > ROUTE_MIN_UPDATE_INTERVAL)))):
                     
                     # 更新上次路由更新的时间戳为当前模拟时间
                     self.last_route_update = self.current_simulation_time
@@ -828,6 +870,9 @@ class Animation:
                     self.last_route_request_time = current_time
                     
                     try:
+                        # 设置请求挂起标志
+                        self.route_request_pending = True
+                        
                         # 发送路由请求到AnimationConstellation进程
                         self.conn.send({
                             "type": "get_route",
@@ -838,10 +883,12 @@ class Animation:
                     except (BrokenPipeError, ConnectionError) as e:
                         print(f"发送路由请求时出错: {e}")
                         # 连接错误时不重试，等待下一次更新
+                        self.route_request_pending = False
                     except Exception as e:
                         print(f"发送路由请求时出现未知错误: {e}")
                         import traceback
                         traceback.print_exc()
+                        self.route_request_pending = False
                 
                 # 检查是否有更新的路由数据
                 if hasattr(self, 'current_path_nodes') and self.current_path_nodes:
@@ -1208,23 +1255,64 @@ class Animation:
             self.route_source_index = None
         if hasattr(self, 'route_target_index'):
             self.route_target_index = None
+        
+        # 取消任何挂起的路由请求
+        if hasattr(self, 'route_request_pending'):
+            self.route_request_pending = False
+        
+        # 添加一个重置标志，防止在重置后继续处理路由请求
+        self.route_reset = True
             
-        # 重置路由更新帧计数器，设置为当前模拟时间而不是None
-        # 这样可以防止在重置后的几次step中继续发送请求
+        # 设置一个非常大的last_route_update值，确保不会在重置后继续发送请求
+        # 使用一个足够大的值，比当前模拟时间大很多，这样可以防止在接下来的step中发送请求
         if hasattr(self, 'last_route_update'):
-            self.last_route_update = self.current_simulation_time
+            self.last_route_update = float('inf')  # 使用无穷大，确保不会触发更新
+        
+        # 确保last_route_request_time也被重置，防止在重置后立即发送新请求
+        if hasattr(self, 'last_route_request_time'):
+            self.last_route_request_time = time.time() + ROUTE_RESET_DURATION  # 设置为未来时间
+            
+        # 设置一个定时器，在一段时间后自动重置route_reset标志
+        self.reset_timer_start = time.time()
 
         # 清除当前路径节点
         self.current_path_nodes = None
+
+        # 清空连接缓冲区，避免之前的请求响应被处理
+        try:
+            while self.conn.poll():
+                _ = self.conn.recv()
+        except Exception:
+            pass
 
         # 更新渲染
         if hasattr(self, 'renderWindow'):
             self.renderWindow.Render()
 
-        print("路由路径已清除")
+        print("路由路径已清除，系统已进入重置状态")
 
     def handleRightClick(self, obj: typing.Any, event: typing.Any) -> None:
         """处理右键点击事件，用于选择路由路径的起点和终点"""
+        # 如果已经有请求挂起，不处理新的点击
+        if hasattr(self, 'route_request_pending') and self.route_request_pending:
+            print("路由请求正在处理中，请稍候...")
+            return
+            
+        # 如果处于重置状态，检查是否已经过了足够的时间
+        if hasattr(self, 'route_reset') and self.route_reset:
+            # 如果已经过了3秒，自动解除重置状态
+            if hasattr(self, 'reset_timer_start') and self.reset_timer_start is not None:
+                if time.time() - self.reset_timer_start > 3.0:  # 3秒后自动解除重置状态
+                    self.route_reset = False
+                    self.reset_timer_start = None
+                    print("系统已恢复，可以继续使用路由功能")
+                else:
+                    print("系统刚刚重置，请稍候再试...")
+                    return
+            else:
+                print("系统刚刚重置，请稍候再试...")
+                return
+            
         # 获取点击位置
         clickPos = self.interactor.GetEventPosition()
 
@@ -1322,6 +1410,12 @@ class Animation:
             if arrow_actor:
                 self.renderer.RemoveActor(arrow_actor)
         self.route_arrows_actors = []
+        
+        # 重置标志设为False，允许发送新的请求
+        self.route_reset = False
+        # 清除重置定时器
+        if hasattr(self, 'reset_timer_start'):
+            self.reset_timer_start = None
 
         # 计算源节点和目标节点的全局索引
         source_index = -1
@@ -1350,88 +1444,60 @@ class Animation:
         # 保存路由源和目标信息，用于后续更新
         self.route_source_index = source_index
         self.route_target_index = target_index
-
+        
+        # 设置路由请求标志，但不在这里等待响应
+        # 这样可以避免在事件处理函数中阻塞UI线程
+        self.route_request_pending = True
+        
         # 发送路由请求到AnimationConstellation进程
-        self.conn.send({
-            "type": "get_route",
-            "source": source_index,
-            "target": target_index
-        })
+        try:
+            self.conn.send({
+                "type": "get_route",
+                "source": source_index,
+                "target": target_index
+            })
+            
+            # 设置请求时间，用于超时检测
+            self.route_request_time = time.time()
+            
+            # 先显示一个直接连接的临时路径
+            # 获取源节点和目标节点的位置
+            source_pos = None
+            target_pos = None
 
-        # 等待响应
-        start_time = time.time()
-        timeout = 2.0  # 2秒超时
+            # 获取源节点位置
+            if source_type == "satellite":
+                source_pos = self.sat_positions[source_shell][source_id]
+            else:  # groundstation
+                source_pos = self.gst_positions[source_id]
 
-        while time.time() - start_time < timeout:
-            if self.conn.poll(0.1):  # 每0.1秒检查一次
-                try:
-                    try:
-                        msg = self.conn.recv()
-                    except (_pickle.UnpicklingError, EOFError) as e:
-                        print(f"接收路由响应时出错: {e}")
-                        # 如果接收出错，跳出循环使用直接连接
-                        break
-                        
-                    if msg.get("type") == "route" and "path" in msg:
-                        # 获取路径节点
-                        try:
-                            path_nodes = [int(node) for node in msg["path"]]
-                            print(f"收到路径: {path_nodes}")
+            # 获取目标节点位置
+            if target_type == "satellite":
+                target_pos = self.sat_positions[target_shell][target_id]
+            else:  # groundstation
+                target_pos = self.gst_positions[target_id]
 
-                            # 保存当前路径节点
-                            self.current_path_nodes = path_nodes
-                            
-                            # 更新路由更新时间戳，防止updateRoutePath立即再次请求
-                            self.last_route_update = self.current_simulation_time
+            if not source_pos or not target_pos:
+                print("无法获取节点位置")
+                return
 
-                            # 显示路径
-                            self.displayRoutePath(path_nodes)
-                            return
-                        except (TypeError, ValueError) as e:
-                            print(f"处理路径节点时出错: {e}")
-                            # 如果处理出错，跳出循环使用直接连接
-                            break
-                except Exception as e:
-                    print(f"处理路由响应时出错: {e}")
-                    import traceback
-                    traceback.print_exc()
-                    # 如果处理出错，跳出循环使用直接连接
-                    break
-
-        print("获取路由路径超时，使用直接连接")
-
-        # 如果超时，使用直接连接
-        # 获取源节点和目标节点的位置
-        source_pos = None
-        target_pos = None
-
-        # 获取源节点位置
-        if source_type == "satellite":
-            source_pos = self.sat_positions[source_shell][source_id]
-        else:  # groundstation
-            source_pos = self.gst_positions[source_id]
-
-        # 获取目标节点位置
-        if target_type == "satellite":
-            target_pos = self.sat_positions[target_shell][target_id]
-        else:  # groundstation
-            target_pos = self.gst_positions[target_id]
-
-        if not source_pos or not target_pos:
-            print("无法获取节点位置")
-            return
-
-        # 创建一个简单的两点路径
-        direct_path = [source_index, target_index]
-        self.displayRoutePath(direct_path)
-
-        # 保存路由信息
-        if not hasattr(self, 'last_route_info') or self.last_route_info != (source_type, source_id, target_type, target_id):
-            print(f"显示从 {source_type}-{source_id} 到 {target_type}-{target_id} 的路由路径")
-            self.last_route_info = (source_type, source_id, target_type, target_id)
-
-        # 更新渲染
-        self.renderWindow.Render()
+            # 创建一个简单的两点路径作为临时显示
+            direct_path = [source_index, target_index]
+            self.displayRoutePath(direct_path)
+            
+            # 保存路由信息
+            if not hasattr(self, 'last_route_info') or self.last_route_info != (source_type, source_id, target_type, target_id):
+                print(f"请求从 {source_type}-{source_id} 到 {target_type}-{target_id} 的路由路径")
+                self.last_route_info = (source_type, source_id, target_type, target_id)
+            
+            # 更新渲染
+            self.renderWindow.Render()
+            
+        except Exception as e:
+            print(f"发送路由请求时出错: {e}")
+            import traceback
+            traceback.print_exc()
+            self.route_request_pending = False
 
     def handleClick(self, obj: typing.Any, event: typing.Any) -> None:
         """处理点击事件"""
@@ -2278,6 +2344,29 @@ class Animation:
                 elif command == "route":
                     # 立即处理路由路径响应
                     try:
+                        # 检查是否处于重置状态，如果是则忽略响应
+                        if hasattr(self, 'route_reset') and self.route_reset:
+                            # 不打印消息，避免重复显示
+                            # 清除请求挂起标志，确保不会卡住
+                            self.route_request_pending = False
+                            # 清除当前路径显示，确保重置状态下不显示任何路径
+                            if hasattr(self, 'route_path_actor') and self.route_path_actor:
+                                self.renderer.RemoveActor(self.route_path_actor)
+                                self.route_path_actor = None
+                            # 清除箭头
+                            if hasattr(self, 'route_arrows_actors'):
+                                for arrow_actor in self.route_arrows_actors:
+                                    if arrow_actor:
+                                        self.renderer.RemoveActor(arrow_actor)
+                                self.route_arrows_actors = []
+                            # 清除当前路径节点，防止重置后仍然显示路径
+                            if hasattr(self, 'current_path_nodes'):
+                                self.current_path_nodes = []
+                            # 确保last_route_update设置为一个足够大的值，防止在重置后立即发送请求
+                            if hasattr(self, 'last_route_update'):
+                                self.last_route_update = float('inf')
+                            continue
+                            
                         if "path" in received_data:
                             # 确保路径中的所有元素都是整数
                             try:
@@ -2288,6 +2377,8 @@ class Animation:
                                 self.current_path_nodes = path_nodes
                                 # 更新路由更新时间戳，防止updateRoutePath立即再次请求
                                 self.last_route_update = self.current_simulation_time
+                                # 清除请求挂起标志
+                                self.route_request_pending = False
                             except (ValueError, TypeError) as e:
                                 print(f"处理路径节点时出错: {e}")
                                 # 如果无法转换为整数，尝试使用原始数据
