@@ -18,7 +18,7 @@
 """Animation of the constellation"""
 
 import vtk
-import threading as td
+import threading
 import seaborn as sns
 import numpy as np
 from multiprocessing.connection import Connection as MultiprocessingConnection
@@ -27,10 +27,9 @@ import typing
 import time
 import subprocess
 import os
-import math
 import requests
 import json
-import pickle as _pickle
+import pickle
 
 import celestial.config
 import celestial.types
@@ -208,6 +207,98 @@ class AnimationConstellation:
                 }
             )
 
+    def _setup_logger(self, name):
+        """
+        设置并返回一个日志记录器
+
+        :param name: 日志记录器名称
+        :return: 配置好的日志记录器
+        """
+        import logging
+        # 避免重复配置日志系统
+        if not logging.getLogger().handlers:
+            logging.basicConfig(level=logging.DEBUG)
+        return logging.getLogger(name)
+        
+    def _decode_response(self, content, logger):
+        """
+        解码HTTP响应内容
+        
+        :param content: 响应内容
+        :param logger: 日志记录器
+        :return: 解码后的字符串，失败返回None
+        """
+        try:
+            # 尝试使用UTF-8解码
+            return content.decode('utf-8')
+        except UnicodeDecodeError:
+            # 如果UTF-8解码失败，尝试使用latin-1
+            logger.warning("UTF-8解码失败，尝试使用latin-1编码")
+            try:
+                return content.decode('latin-1')
+            except Exception as e:
+                logger.error(f"解码响应内容失败: {e}")
+                return None
+
+    def _get_node_info(self, node_index):
+        """
+        获取节点的shell和ID信息
+
+        :param node_index: 节点全局索引
+        :return: (shell, id) 元组
+        """
+        # 创建日志记录器用于调试
+        logger = self._setup_logger("node_info")
+        
+        # 计算总卫星数
+        total_sats = sum(s.total_sats for s in self.shells)
+        logger.debug(f"计算节点信息: 全局索引={node_index}, 总卫星数={total_sats}")
+        
+        # 记录每个shell的卫星数量，用于调试
+        shell_sizes = [s.total_sats for s in self.shells]
+        logger.debug(f"各shell卫星数量: {shell_sizes}")
+        
+        if node_index < total_sats:  # 卫星
+            # 计算累积卫星数，用于确定节点所在的shell
+            accumulated_sats = 0
+            for i, shell in enumerate(self.shells):
+                shell_size = shell.total_sats
+                logger.debug(f"检查shell {i+1}: 累积卫星数={accumulated_sats}, shell大小={shell_size}")
+                
+                # 如果节点索引小于当前累积卫星数加上当前shell的卫星数，则节点在当前shell中
+                if node_index < accumulated_sats + shell_size:
+                    # 计算节点在当前shell中的索引
+                    shell_id = i + 1  # shell_identifier从1开始
+                    node_id_in_shell = node_index - accumulated_sats
+                    logger.debug(f"找到匹配: shell={shell_id}, id={node_id_in_shell}")
+                    return shell_id, node_id_in_shell
+                
+                accumulated_sats += shell_size
+            
+            # 如果循环结束仍未找到，返回默认值
+            logger.warning(f"未找到匹配的shell，使用默认值: shell=1, id={node_index}")
+            return 1, node_index  # 默认为shell 1
+        else:  # 地面站
+            node_shell = 0  # 地面站的shell为0
+            node_id = node_index - total_sats
+            logger.debug(f"地面站节点: shell={node_shell}, id={node_id}")
+            return node_shell, node_id
+
+    def _create_fallback_response(self, source, target):
+        """
+        创建一个简单的直接连接响应
+
+        :param source: 源节点索引
+        :param target: 目标节点索引
+        :return: 包含直接路径的响应字典
+        """
+        return {
+            "type": "route",
+            "source": int(source),
+            "target": int(target),
+            "path": [int(source), int(target)]
+        }
+
     def get_route_path(self, source_index: int, target_index: int) -> typing.List[int]:
         """
         获取从source_index到target_index的路由路径，使用HTTP API获取路径信息
@@ -216,48 +307,24 @@ class AnimationConstellation:
         :param target_index: 目标节点全局索引
         :return: 节点索引列表，表示从源到目标的路径
         """
-        import logging
-        # 将日志级别设置为DEBUG，减少INFO级别的输出
-        logging.basicConfig(level=logging.DEBUG)
-        logger = logging.getLogger("route_path")
+        logger = self._setup_logger("route_path")
         logger.debug(f"计算从 {source_index} 到 {target_index} 的路径")
+        
+        # 创建默认的直接连接路径
+        default_path = [int(source_index), int(target_index)]
+        
+        # 特殊处理：如果是源节点和目标节点相同
+        if source_index == target_index:
+            logger.info(f"源节点和目标节点相同: {source_index}，返回单节点路径")
+            return [source_index]
 
         try:
-            # 特殊处理：如果是源节点和目标节点相同
-            if source_index == target_index:
-                logger.info(f"源节点和目标节点相同: {source_index}，返回单节点路径")
-                return [source_index]
-
-            # 确定源节点和目标节点类型（卫星还是地面站）
+            # 获取总卫星数
             total_sats = sum(s.total_sats for s in self.shells)
 
-            # 确定源节点的shell和ID
-            if source_index < total_sats:  # 卫星
-                source_shell = 0
-                source_id = source_index
-                for i, shell in enumerate(self.shells):
-                    if source_id >= shell.total_sats:
-                        source_id -= shell.total_sats
-                    else:
-                        source_shell = i + 1  # shell_identifier从1开始
-                        break
-            else:  # 地面站
-                source_shell = 0  # 地面站的shell为0
-                source_id = source_index - total_sats
-
-            # 确定目标节点的shell和ID
-            if target_index < total_sats:  # 卫星
-                target_shell = 0
-                target_id = target_index
-                for i, shell in enumerate(self.shells):
-                    if target_id >= shell.total_sats:
-                        target_id -= shell.total_sats
-                    else:
-                        target_shell = i + 1  # shell_identifier从1开始
-                        break
-            else:  # 地面站
-                target_shell = 0  # 地面站的shell为0
-                target_id = target_index - total_sats
+            # 获取源节点和目标节点的shell和ID
+            source_shell, source_id = self._get_node_info(source_index)
+            target_shell, target_id = self._get_node_info(target_index)
 
             logger.info(f"源节点: shell={source_shell}, id={source_id}")
             logger.info(f"目标节点: shell={target_shell}, id={target_id}")
@@ -266,24 +333,18 @@ class AnimationConstellation:
             url = f"{API_BASE_URL}/path/{source_shell}/{source_id}/{target_shell}/{target_id}"
             logger.info(f"请求路径API: {url}")
 
+            # 发送HTTP请求
             try:
-                # 发送HTTP请求
                 response = requests.get(url, timeout=5)
-
-                # 检查响应状态码
+                
                 if response.status_code != 200:
                     logger.error(f"HTTP请求失败: 状态码 {response.status_code}")
-                    return [source_index, target_index]  # 失败时使用直接连接
+                    return default_path
 
-                # 获取响应内容并检查编码
-                content = response.content
-                try:
-                    # 尝试使用UTF-8解码
-                    content_str = content.decode('utf-8')
-                except UnicodeDecodeError:
-                    # 如果UTF-8解码失败，尝试使用latin-1（这个编码可以处理任何字节序列）
-                    logger.warning("UTF-8解码失败，尝试使用latin-1编码")
-                    content_str = content.decode('latin-1')
+                # 获取响应内容并解码
+                content_str = self._decode_response(response.content, logger)
+                if not content_str:
+                    return default_path
                 
                 # 解析JSON响应
                 try:
@@ -291,64 +352,107 @@ class AnimationConstellation:
                     logger.debug(f"API响应: {path_data}")
                 except json.JSONDecodeError as json_err:
                     logger.error(f"JSON解析错误: {json_err}, 内容: {content_str[:100]}...")
-                    return [source_index, target_index]  # 解析错误时使用直接连接
+                    return default_path
+                
 
                 # 提取路径段信息
-                if "segments" in path_data:
-                    segments = path_data["segments"]
-                    
-                    # 初始化路径，从源节点开始
-                    path = [source_index]
-                    
-                    # 处理每个路径段，提取节点信息
-                    for segment in segments:
-                        if "source" in segment and "target" in segment:
-                            # 获取目标节点信息
-                            target_info = segment["target"]
-                            segment_target_shell = target_info.get("shell", 0)
-                            segment_target_id = target_info.get("id", 0)
-                            
-                            # 计算全局索引
-                            if segment_target_shell > 0:  # 卫星
-                                # 计算卫星的全局索引
-                                global_target = segment_target_id
-                                for s in range(segment_target_shell - 1):
-                                    global_target += self.shells[s].total_sats
-                                path.append(global_target)
-                            else:  # 地面站
-                                path.append(total_sats + segment_target_id)
-                    
-                    # 确保路径至少包含源和目标
-                    if len(path) < 2:
-                        path.append(target_index)
-                    # 确保路径以目标结束
-                    elif path[-1] != target_index:
-                        path.append(target_index)
-                    
-                    logger.info(f"从API获取的路径: {path}")
-                    return path
-                else:
+                if "segments" not in path_data:
                     logger.warning("API响应中没有segments字段")
-                    return [source_index, target_index]  # 使用直接连接
+                    return default_path
+                
+                # 检查是否路径被阻塞
+                if "blocked" in path_data and path_data["blocked"] == True:
+                    logger.warning(f"路径被阻塞: {source_shell}/{source_id} -> {target_shell}/{target_id}")
+                    return default_path
+                
+                # 检查segments是否为None
+                if path_data["segments"] is None:
+                    logger.warning(f"路径段为空(None): {source_shell}/{source_id} -> {target_shell}/{target_id}")
+                    return default_path
+                    
+                # 处理路径段
+                path = [source_index]  # 初始化路径，从源节点开始
+                
+                # 确保segments是可迭代的
+                segments = path_data["segments"] if isinstance(path_data["segments"], list) else []
+                
+                for segment in segments:
+                    if "source" in segment and "target" in segment:
+                        # 获取目标节点信息
+                        target_info = segment["target"]
+                        segment_target_shell = target_info.get("shell", 0)
+                        segment_target_id = target_info.get("id", 0)
+                        
+                        # 计算全局索引
+                        if segment_target_shell > 0:  # 卫星
+                            # 计算卫星的全局索引
+                            global_target = segment_target_id
+                            for s in range(segment_target_shell - 1):
+                                global_target += self.shells[s].total_sats
+                            path.append(global_target)
+                        else:  # 地面站
+                            path.append(total_sats + segment_target_id)
+                
+                # 确保路径至少包含源和目标
+                if len(path) < 2:
+                    logger.warning(f"路径节点数量不足，添加目标节点: {target_index}")
+                    path.append(target_index)
+                # 确保路径以目标结束
+                elif path[-1] != target_index:
+                    logger.warning(f"路径末尾不是目标节点，添加目标节点: {target_index}")
+                    path.append(target_index)
+                
+                # 确保所有路径节点都是整数
+                try:
+                    path = [int(node) for node in path]
+                except (ValueError, TypeError) as e:
+                    logger.error(f"路径节点转换为整数失败: {e}")
+                    return default_path
+                
+                logger.info(f"从API获取的路径: {path}")
+                return path
                     
             except requests.RequestException as e:
                 logger.error(f"HTTP请求异常: {e}")
-                return [source_index, target_index]  # 异常时使用直接连接
-            except json.JSONDecodeError as e:
-                logger.error(f"JSON解析错误: {e}")
-                return [source_index, target_index]  # 解析错误时使用直接连接
             except Exception as e:
                 logger.error(f"处理路径数据时出错: {e}")
-                import traceback
-                traceback.print_exc()
-                return [source_index, target_index]  # 其他错误时使用直接连接
 
         except Exception as e:
             logger.error(f"路由计算出错: {e}")
-            import traceback
-            traceback.print_exc()
-            return [source_index, target_index]
+            
+        return default_path  # 所有异常情况下返回默认路径
 
+    def _send_route_response(self, response, source, target, logger):
+        """
+        发送路由响应
+        
+        :param response: 响应数据
+        :param source: 源节点
+        :param target: 目标节点
+        :param logger: 日志记录器
+        :return: 是否成功发送
+        """
+        # 确保数据可以被序列化
+        try:
+            response_copy = response.copy()
+        except Exception as error:
+            logger.error(f"响应无法复制: {error}")
+            # 回退到最简单的响应
+            response = self._create_fallback_response(source, target)
+
+        try:
+            self.conn.send(response)
+            return True
+        except Exception as send_error:
+            logger.error(f"发送路由响应时出错: {send_error}")
+            # 尝试发送最简化版本的响应
+            try:
+                self.conn.send(self._create_fallback_response(source, target))
+                return True
+            except Exception as retry_error:
+                logger.error(f"发送简化路由响应时出错: {retry_error}")
+                return False
+                
     def handle_control_message(self, msg):
         """
         处理来自Animation的控制消息
@@ -356,22 +460,21 @@ class AnimationConstellation:
         :param msg: 控制消息
         :return: 是否已处理消息
         """
-        import logging
-        # 将日志级别设置为DEBUG，减少INFO级别的输出
-        logging.basicConfig(level=logging.DEBUG)
-        logger = logging.getLogger("control_message")
+        logger = self._setup_logger("control_message")
         
+        # 基本消息验证
+        if not isinstance(msg, dict):
+            logger.warning(f"接收到非字典消息: {type(msg)}")
+            return False
+
+        if "type" not in msg:
+            logger.warning(f"消息缺少类型字段: {msg}")
+            return False
+
+        msg_type = msg["type"]
+
         try:
-            if not isinstance(msg, dict):
-                logger.warning(f"接收到非字典消息: {type(msg)}")
-                return False
-
-            if "type" not in msg:
-                logger.warning(f"消息缺少类型字段: {msg}")
-                return False
-
-            msg_type = msg["type"]
-
+            # 处理路由请求
             if msg_type == "get_route":
                 if "source" not in msg or "target" not in msg:
                     logger.error("路由请求缺少源或目标")
@@ -405,7 +508,6 @@ class AnimationConstellation:
                 total_sats = sum(s.total_sats for s in self.shells)
                 source_type = "地面站" if source >= total_sats else "卫星"
                 target_type = "地面站" if target >= total_sats else "卫星"
-
                 logger.debug(f"路由路径: {source_type} {source} 到 {target_type} {target}")
                 logger.debug(f"路径节点: {path_nodes}")
 
@@ -417,46 +519,13 @@ class AnimationConstellation:
                     "path": path_nodes
                 }
 
-                # 使用pickle序列化测试，确保数据可以被序列化
-                try:
-                    import pickle
-                    pickle.dumps(response)
-                except Exception as pickle_error:
-                    logger.error(f"响应无法序列化: {pickle_error}")
-                    # 回退到最简单的响应
-                    response = {
-                        "type": "route",
-                        "source": int(source),
-                        "target": int(target),
-                        "path": [int(source), int(target)]
-                    }
-
-                try:
-                    self.conn.send(response)
-                    return True
-                except Exception as send_error:
-                    logger.error(f"发送路由响应时出错: {send_error}")
-                    # 尝试发送最简化版本的响应
-                    try:
-                        # 创建一个最简单的响应，只包含基本数据类型
-                        simple_response = {
-                            "type": "route",
-                            "source": int(source),
-                            "target": int(target),
-                            "path": [int(source), int(target)]
-                        }
-                        self.conn.send(simple_response)
-                        return True
-                    except Exception as retry_error:
-                        logger.error(f"发送简化路由响应时出错: {retry_error}")
-                        return False
+                # 尝试发送响应
+                return self._send_route_response(response, source, target, logger)
 
             # 可以在这里添加其他消息类型的处理
 
         except Exception as e:
             logger.error(f"处理控制消息时出错: {e}")
-            import traceback
-            traceback.print_exc()
 
         return False
 
@@ -611,7 +680,7 @@ class Animation:
         self.gst_actor = types.SimpleNamespace()
         self.gst_link_actor = types.SimpleNamespace()
 
-        self.lock = td.Lock()
+        self.lock = threading.Lock()
 
         # print(f"Animation: initializing with {self.gst_num} ground stations")
 
@@ -619,7 +688,7 @@ class Animation:
         if self.draw_links:
             self.makeGstLinkActors(self.gst_num)
 
-        self.controlThread = td.Thread(target=self.controlThreadHandler)
+        self.controlThread = threading.Thread(target=self.controlThreadHandler)
         self.controlThread.start()
 
         self.makeRenderWindow()
@@ -886,8 +955,6 @@ class Animation:
                         self.route_request_pending = False
                     except Exception as e:
                         print(f"发送路由请求时出现未知错误: {e}")
-                        import traceback
-                        traceback.print_exc()
                         self.route_request_pending = False
                 
                 # 检查是否有更新的路由数据
@@ -909,8 +976,6 @@ class Animation:
                         self.displayRoutePath(self.current_path_nodes)
                     except Exception as e:
                         print(f"更新路径显示时出错: {e}")
-                        import traceback
-                        traceback.print_exc()
                         # 出错时清除路径显示，防止显示错误的路径
                         self.clearRoutePath()
             elif hasattr(self, 'route_path_actor') and self.route_path_actor is not None:
@@ -918,12 +983,10 @@ class Animation:
                 self.clearRoutePath()
         except Exception as e:
             print(f"更新路由路径时出现未捕获的错误: {e}")
-            import traceback
-            traceback.print_exc()
             # 出现未捕获的错误时，尝试清除路径显示
             try:
                 self.clearRoutePath()
-            except:
+            except Exception:
                 pass
 
     def updateInfoText(self) -> None:
@@ -1209,7 +1272,7 @@ class Animation:
         """设置点击拾取器"""
         # 创建点拾取器
         picker = vtk.vtkPointPicker()
-        picker.SetTolerance(0.01)  # 增加容差，使点击更容易命中
+        picker.SetTolerance(0.0009)  # 增加容差，使点击更容易命中
         self.interactor.SetPicker(picker)
 
         # 添加点击事件回调
@@ -1300,9 +1363,9 @@ class Animation:
             
         # 如果处于重置状态，检查是否已经过了足够的时间
         if hasattr(self, 'route_reset') and self.route_reset:
-            # 如果已经过了3秒，自动解除重置状态
+            # 如果已经过了重置持续时间，自动解除重置状态
             if hasattr(self, 'reset_timer_start') and self.reset_timer_start is not None:
-                if time.time() - self.reset_timer_start > 3.0:  # 3秒后自动解除重置状态
+                if time.time() - self.reset_timer_start > ROUTE_RESET_DURATION:  # 使用常量
                     self.route_reset = False
                     self.reset_timer_start = None
                     print("系统已恢复，可以继续使用路由功能")
@@ -1423,7 +1486,8 @@ class Animation:
 
         # 计算源节点全局索引
         if source_type == "satellite":
-            # 计算之前shell的卫星总数
+            # 对于卫星，source_shell是从0开始的索引，但在UI显示和IP计算中shell_identifier是从1开始的
+            # 所以在右键点击事件中，我们需要使用shell索引(0-based)而不是shell标识符(1-based)
             offset = 0
             for s in range(source_shell):
                 offset += self.shell_sats[s]
@@ -1433,7 +1497,7 @@ class Animation:
 
         # 计算目标节点全局索引
         if target_type == "satellite":
-            # 计算之前shell的卫星总数
+            # 同样，对于卫星，target_shell是从0开始的索引
             offset = 0
             for s in range(target_shell):
                 offset += self.shell_sats[s]
@@ -1584,9 +1648,10 @@ class Animation:
         # 获取卫星信息
         sat = self.sat_positions[shell][sat_id]
 
-        # 计算卫星IP地址
-        ipv6 = self.calculateIPv6(shell + 1, sat_id)  # shell_identifier从1开始
-        ipv4 = self.calculateIPv4(shell + 1, sat_id)
+        # 计算卫星IP地址 - 确保使用正确的shell标识符
+        # 使用self.selected_shell确保IP地址计算与显示的SHELL-ID一致
+        ipv6 = self.calculateIPv6(self.selected_shell + 1, self.selected_id)  # shell_identifier从1开始
+        ipv4 = self.calculateIPv4(self.selected_shell + 1, self.selected_id)
 
         # 固定面板位置在屏幕右上角
         window_size = self.renderWindow.GetSize()
@@ -1596,7 +1661,9 @@ class Animation:
 
         # 更新面板文本
         self.info_panel_text_actors[0].SetInput(f"Satellite Info")
-        self.info_panel_text_actors[1].SetInput(f"SHELL-ID: {shell+1}-{sat_id}")
+        # 确保使用正确的shell和sat_id，这里使用当前点击的卫星的实际索引
+        # 使用self.selected_shell和self.selected_id确保显示的是用户实际点击的卫星
+        self.info_panel_text_actors[1].SetInput(f"SHELL-ID: {self.selected_shell+1}-{self.selected_id}")
         self.info_panel_text_actors[2].SetInput(f"IPv6: {ipv6}")
         self.info_panel_text_actors[3].SetInput(f"IPv4: {ipv4}")
         self.info_panel_text_actors[4].SetInput(f"Position: ({sat['x']:.0f}, {sat['y']:.0f}, {sat['z']:.0f})")
@@ -2285,7 +2352,7 @@ class Animation:
                 try:
                     received_data = self.conn.recv()
                     consecutive_errors = 0  # 成功接收数据，重置错误计数
-                except (_pickle.UnpicklingError, EOFError) as e:
+                except (pickle.UnpicklingError, EOFError) as e:
                     consecutive_errors += 1
                     print(f"接收数据时出错 ({consecutive_errors}/{max_consecutive_errors}): {e}")
                     
@@ -2387,8 +2454,6 @@ class Animation:
                                     self.last_route_update = self.current_simulation_time
                     except Exception as e:
                         print(f"处理路由响应时出错: {e}")
-                        import traceback
-                        traceback.print_exc()
             except EOFError:
                 print("Connection closed by constellation process")
                 break
@@ -2397,7 +2462,7 @@ class Animation:
                 # 尝试短暂休眠后继续
                 time.sleep(1)
                 continue
-            except _pickle.UnpicklingError as e:
+            except pickle.UnpicklingError as e:
                 print(f"数据反序列化错误: {e}")
                 # 对于序列化错误，记录但继续运行
                 time.sleep(0.5)
@@ -2525,8 +2590,6 @@ class Animation:
             self.renderer.AddActor(self.route_path_actor)
         except Exception as e:
             print(f"显示路由路径时出错: {e}")
-            import traceback
-            traceback.print_exc()
         
         # 更新渲染
         self.renderWindow.Render()
