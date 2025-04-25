@@ -50,7 +50,6 @@ import concurrent.futures
 import signal
 import typing
 
-
 import celestial.zip_serializer
 import celestial.config
 import celestial.animation
@@ -144,11 +143,10 @@ def main():
     # 创建多进程通信管道
     parent_conn, child_conn = multiprocessing.Pipe()
     
-    # 创建动画星座对象（用于更新动画），不再需要传入serializer
+    # 创建动画星座对象（用于更新动画）
     animation_constellation = celestial.animation.AnimationConstellation(
         config, 
-        parent_conn
-        # 不再需要传入serializer，因为现在使用HTTP API获取路由路径
+        parent_conn,
     )
     
     # 创建并启动动画进程
