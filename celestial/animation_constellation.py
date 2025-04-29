@@ -20,7 +20,6 @@
 import typing
 import requests
 import json
-import time
 from multiprocessing.connection import Connection as MultiprocessingConnection
 
 import celestial.config

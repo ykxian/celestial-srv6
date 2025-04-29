@@ -18,10 +18,8 @@
 """可视化元素（Actors）相关功能，包括卫星、地面站、链路和地球模型的创建和更新"""
 
 import vtk
-import numpy as np
 import typing
 from dataclasses import dataclass
-import math
 
 from celestial.animation_constants import *
 
@@ -426,9 +424,8 @@ class AnimationActors:
         self.earthSource.SetRadius(self.earthRadius * 1.001)
         self.earthSource.SetOnRatio(1)
         
-        # 调试：获取地球轮廓的关键点位置
+        # 更新地球轮廓
         self.earthSource.Update()
-        earthData = self.earthSource.GetOutput()
 
         # 创建映射器
         self.earthMapper = vtk.vtkPolyDataMapper()

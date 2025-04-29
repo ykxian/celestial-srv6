@@ -25,7 +25,6 @@ API_BASE_URL = "http://127.0.0.1"  # API基础URL
 LANDMASS_OUTLINE_COLOR = (0.0, 0.0, 0.0)  # black, best contrast
 EARTH_LAND_OPACITY = 1.0
 
-EARTH_BASE_COLOR = (0.9, 0.9, 1.0)  # light blue, like water!
 EARTH_OPACITY = 1.0
 
 BACKGROUND_COLOR = (1.0, 1.0, 1.0)  # white
@@ -35,7 +34,7 @@ SAT_OPACITY = 1.0
 SAT_INACTIVE_OPACITY = 0.5
 
 GST_COLOR = (0.0, 1.0, 0.0)  # green, color of groundstations
-GST_OPACITY = 10.0
+GST_OPACITY = 1.0
 
 ISL_LINK_COLOR = (0.9, 0.5, 0.1)  # yellow-brown, satellite-satellite links
 ISL_LINK_OPACITY = 1.0
@@ -48,8 +47,6 @@ GST_LINE_WIDTH = 2  # how wide to draw line in pixels
 PATH_LINK_COLOR = (0.8, 0.2, 0.8)  # purpleish? path links
 PATH_LINK_OPACITY = 0.7
 PATH_LINE_WIDTH = 13  # how wide to draw line in pixels
-
-EARTH_SPHERE_POINTS = 5000  # higher = smoother earth model, slower to generate
 
 # 地球纹理相关常量
 EARTH_TEXTURE_PATH = "/home/ubuntu/celestial/celestial/earth_texture.jpg"  # 地球纹理图像路径

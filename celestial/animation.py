@@ -3,20 +3,11 @@
 import vtk
 import threading
 import seaborn as sns
-import numpy as np
 from multiprocessing.connection import Connection as MultiprocessingConnection
-import types
 import typing
 import time
-import subprocess
-import os
-import requests
-import json
 import pickle
 
-import celestial.config
-import celestial.types
-import celestial.shell
 from celestial.animation_constants import *
 from celestial.animation_constellation import AnimationConstellation
 from celestial.animation_ui import AnimationUI
