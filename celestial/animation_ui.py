@@ -400,10 +400,15 @@ class AnimationUI:
         # 首先尝试检测地面站（设置更高的优先级）
         # 遍历所有地面站点，检查点击位置是否在地面站附近
         for gst_id in range(self.animation.gst_num):
-            # 获取地面站的世界坐标
-            gst_coords = self.animation.gst_positions[gst_id]
-            # 将世界坐标转换为屏幕坐标
-            gst_world_pos = [gst_coords['x'], gst_coords['y'], gst_coords['z']]
+            # 获取地面站的世界坐标 - 直接从地面站演员获取最新位置
+            if self.animation.actors.gst_actor and self.animation.actors.gst_actor.satVtkPts:
+                gst_world_pos = [0, 0, 0]  # 初始化坐标
+                self.animation.actors.gst_actor.satVtkPts.GetPoint(gst_id, gst_world_pos)
+            else:
+                # 如果无法从演员获取，则使用存储的位置（可能不是最新的）
+                gst_coords = self.animation.gst_positions[gst_id]
+                gst_world_pos = [gst_coords['x'], gst_coords['y'], gst_coords['z']]
+                
             # 使用vtkCoordinate进行坐标转换，这是VTK推荐的方式
             coordinate = vtk.vtkCoordinate()
             coordinate.SetCoordinateSystemToWorld()
@@ -477,10 +482,15 @@ class AnimationUI:
         # 首先尝试检测地面站（设置更高的优先级）
         # 遍历所有地面站点，检查点击位置是否在地面站附近
         for gst_id in range(self.animation.gst_num):
-            # 获取地面站的世界坐标
-            gst_coords = self.animation.gst_positions[gst_id]
-            # 将世界坐标转换为屏幕坐标
-            gst_world_pos = [gst_coords['x'], gst_coords['y'], gst_coords['z']]
+            # 获取地面站的世界坐标 - 直接从地面站演员获取最新位置
+            if self.animation.actors.gst_actor and self.animation.actors.gst_actor.satVtkPts:
+                gst_world_pos = [0, 0, 0]  # 初始化坐标
+                self.animation.actors.gst_actor.satVtkPts.GetPoint(gst_id, gst_world_pos)
+            else:
+                # 如果无法从演员获取，则使用存储的位置（可能不是最新的）
+                gst_coords = self.animation.gst_positions[gst_id]
+                gst_world_pos = [gst_coords['x'], gst_coords['y'], gst_coords['z']]
+                
             # 使用vtkCoordinate进行坐标转换
             coordinate = vtk.vtkCoordinate()
             coordinate.SetCoordinateSystemToWorld()

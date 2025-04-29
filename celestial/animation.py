@@ -577,8 +577,15 @@ class Animation:
                     else:  # 地面站
                         gst_idx = node_idx - total_sats
                         if gst_idx < len(self.gst_positions):
-                            pos = self.gst_positions[gst_idx]
-                            node_positions.append((pos['x'], pos['y'], pos['z']))
+                            # 优先从地面站演员获取最新位置
+                            if self.actors.gst_actor and self.actors.gst_actor.satVtkPts:
+                                gst_world_pos = [0, 0, 0]  # 初始化坐标
+                                self.actors.gst_actor.satVtkPts.GetPoint(gst_idx, gst_world_pos)
+                                node_positions.append((gst_world_pos[0], gst_world_pos[1], gst_world_pos[2]))
+                            else:
+                                # 如果无法从演员获取，则使用存储的位置（可能不是最新的）
+                                pos = self.gst_positions[gst_idx]
+                                node_positions.append((pos['x'], pos['y'], pos['z']))
                         else:
                             print(f"无效的地面站索引: {gst_idx}")
                             continue

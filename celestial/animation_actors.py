@@ -575,14 +575,7 @@ class AnimationActors:
         gst_link_pts = self.gst_link_actor.gstLinkPoints
         gst_link_lines = self.gst_link_actor.gstLinkLines
 
-        # 更新地面站点位置
-        for i in range(len(gst_positions)):
-            gst_link_pts.SetPoint(
-                i,
-                gst_positions[i]["x"],
-                gst_positions[i]["y"],
-                gst_positions[i]["z"],
-            )
+        # 注意：不再更新地面站位置，因为地面站是固定的
 
         # 更新卫星点位置
         num_points = len(gst_positions)
