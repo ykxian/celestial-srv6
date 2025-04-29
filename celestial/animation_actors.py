@@ -21,6 +21,7 @@ import vtk
 import numpy as np
 import typing
 from dataclasses import dataclass
+import math
 
 from celestial.animation_constants import *
 
@@ -359,7 +360,7 @@ class AnimationActors:
         num_points = gst_num
 
         for s in range(len(shell_sats)):
-            for i in range(shell_sats[s]):
+            for i in range(len(sat_positions[s])):
                 x = sat_positions[s][i]["x"]
                 y = sat_positions[s][i]["y"]
                 z = sat_positions[s][i]["z"]
@@ -373,10 +374,10 @@ class AnimationActors:
 
         for s in range(len(shell_sats)):
             for i in range(len(gst_links[s])):
-                e1 = gst_links[s][i]["gst"] * -1 - 1
+                e1 = gst_links[s][i]["gst"] *-1 -1
                 e2 = gst_links[s][i]["sat"] + offset
 
-                # 必须将链路端点转换为点名称
+                # 添加链路
                 self.gst_link_actor.gstLinkLines.InsertNextCell(2)
                 self.gst_link_actor.gstLinkLines.InsertCellPoint(e1)
                 self.gst_link_actor.gstLinkLines.InsertCellPoint(e2)
@@ -424,6 +425,10 @@ class AnimationActors:
         self.earthSource = vtk.vtkEarthSource()
         self.earthSource.SetRadius(self.earthRadius * 1.001)
         self.earthSource.SetOnRatio(1)
+        
+        # 调试：获取地球轮廓的关键点位置
+        self.earthSource.Update()
+        earthData = self.earthSource.GetOutput()
 
         # 创建映射器
         self.earthMapper = vtk.vtkPolyDataMapper()
@@ -437,45 +442,34 @@ class AnimationActors:
         self.earthActor.GetProperty().SetColor(LANDMASS_OUTLINE_COLOR)
         self.earthActor.GetProperty().SetOpacity(EARTH_LAND_OPACITY)
 
-        # 创建地球球体
-        num_pts = EARTH_SPHERE_POINTS
-        indices = np.arange(0, num_pts, dtype=float) + 0.5
-        phi = np.arccos(1 - 2 * indices / num_pts)
-        theta = np.pi * (1 + 5**0.5) * indices
-        x = np.cos(theta) * np.sin(phi) * self.earthRadius
-        y = np.sin(theta) * np.sin(phi) * self.earthRadius
-        z = np.cos(phi) * self.earthRadius
-
-        # 创建球体点
-        points = vtk.vtkPoints()
-        for i in range(len(x)):
-            points.InsertNextPoint(x[i], y[i], z[i])
-
-        poly = vtk.vtkPolyData()
-        poly.SetPoints(points)
-
-        # 使用Delaunay三角剖分创建球面
-        d3D = vtk.vtkDelaunay3D()
-        d3D.SetInputData(poly)
-
-        # 提取表面
-        dss = vtk.vtkDataSetSurfaceFilter()
-        dss.SetInputConnection(d3D.GetOutputPort())
-        dss.Update()
-
-        # 获取最终的多边形数据
-        spherePoly = dss.GetOutput()
-
+        # 创建地球球体（推荐用TexturedSphereSource，避免经线对称问题）
+        sphere = vtk.vtkTexturedSphereSource()
+        sphere.SetRadius(self.earthRadius)
+        sphere.SetThetaResolution(100)
+        sphere.SetPhiResolution(100)
+        
+        # 加载纹理图像
+        jpegReader = vtk.vtkJPEGReader()
+        jpegReader.SetFileName(EARTH_TEXTURE_PATH)
+        
+        # 创建纹理对象
+        texture = vtk.vtkTexture()
+        texture.SetInputConnection(jpegReader.GetOutputPort())
+        texture.InterpolateOn()
+        
         # 创建映射器
         sphereMapper = vtk.vtkPolyDataMapper()
-        sphereMapper.SetInputData(spherePoly)
-
+        sphereMapper.SetInputConnection(sphere.GetOutputPort())
+        
         # 创建演员
         self.sphereActor = vtk.vtkActor()
         self.sphereActor.SetMapper(sphereMapper)
-
-        # 设置颜色
-        self.sphereActor.GetProperty().SetColor(EARTH_BASE_COLOR)
+        self.sphereActor.SetTexture(texture)
+        
+        # 设置地球球体初始旋转，让南极方向正对（Z轴旋转180度）
+        self.sphereActor.SetOrientation(0, 0, 180)
+        
+        # 设置不透明度
         self.sphereActor.GetProperty().SetOpacity(EARTH_OPACITY)
         
         # 添加到渲染器
@@ -614,8 +608,8 @@ class AnimationActors:
         # 更新地面站链路
         for s in range(len(gst_links)):
             for i in range(len(gst_links[s])):
-                # 地面站索引为负值
-                e1 = gst_links[s][i]["gst"] * -1 - 1
+                # 地面站索引直接用gst字段，确保与点集一致
+                e1 = gst_links[s][i]["gst"] *-1 -1
                 # 卫星索引为正值，需要加上地面站数量和前面壳层卫星数量的偏移
                 e2 = gst_links[s][i]["sat"] + shell_offsets[s]
                 

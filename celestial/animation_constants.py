@@ -51,6 +51,14 @@ PATH_LINE_WIDTH = 13  # how wide to draw line in pixels
 
 EARTH_SPHERE_POINTS = 5000  # higher = smoother earth model, slower to generate
 
+# 地球纹理相关常量
+EARTH_TEXTURE_PATH = "/home/ubuntu/celestial/celestial/earth_texture.jpg"  # 地球纹理图像路径
+# 地球贴图初始旋转角度（绕Y轴，单位：度）
+EARTH_TEXTURE_ROTATION_DEG = 90  # 可调，顺时针旋转90度，南极朝上时让大陆对齐
+EARTH_TEXTURE_ROTATION = 0.0  # 纹理旋转角度（度）
+# 地球贴图水平方向偏移（S方向，单位：0~1，正值南极逆时针）
+EARTH_TEXTURE_SHIFT_S = 0/360
+
 SAT_POINT_SIZE = 8  # how big satellites are in (probably) screen pixels
 GST_POINT_SIZE = 8  # how big ground points are in (probably) screen pixels
 
