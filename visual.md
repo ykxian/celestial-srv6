@@ -86,8 +86,8 @@ Celestial的可视化系统由以下五个核心模块组成，每个模块负�
 #### 3.1.1 卫星显示
 - 支持多个卫星壳层（Shell）同时显示
 - 卫星以彩色点表示，大小可通过`SAT_POINT_SIZE`调整
-- 不同壳层的卫星使用不同颜色，便于区分
-- 活跃卫星（在当前视图中）与非活跃卫星透明度不同
+- 不同壳层的卫星使用自动生成的不同颜色，通过seaborn颜色调色板实现
+- 活跃卫星（在当前视图中）与非活跃卫星透明度不同，通过`SAT_OPACITY`和`SAT_INACTIVE_OPACITY`控制
 
 #### 3.1.2 卫星信息
 - 点击卫星显示详细信息面板
@@ -97,39 +97,40 @@ Celestial的可视化系统由以下五个核心模块组成，每个模块负�
 ### 3.2 地球模型
 
 - 高精度地球球体模型，支持旋转动画
+- 使用纹理贴图增强视觉效果，纹理路径通过`EARTH_TEXTURE_PATH`指定
 - 显示陆地轮廓，增强视觉效果
-- 地球模型精度可通过`EARTH_SPHERE_POINTS`参数调整
-- 支持自定义地球颜色和透明度
+- 支持自定义地球颜色和透明度，通过`EARTH_OPACITY`和`EARTH_LAND_OPACITY`控制
 
 ### 3.3 地面站功能
 
-- 地面站以特殊颜色（默认绿色）标记
+- 地面站以特殊颜色（默认绿色`GST_COLOR`）标记
 - 显示地面站名称和位置信息
 - 点击地面站显示详细信息，包括ID、名称、IP地址
 - 支持通过SSH连接到地面站
 
 ### 3.4 链路可视化
 
-- **星间链路（ISL）**：显示卫星之间的通信连接
-- **地面站链路（GSL）**：显示卫星与地面站之间的连接
-- **路由路径**：高亮显示数据包传输路径
+- **星间链路（ISL）**：显示卫星之间的通信连接，颜色通过seaborn调色板自动生成
+- **地面站链路（GSL）**：显示卫星与地面站之间的连接，使用`GST_LINK_COLOR`
+- **路由路径**：高亮显示数据包传输路径，使用`ROUTE_PATH_COLOR`
 - 所有链路类型支持自定义颜色、线宽和透明度
-- 可通过命令行参数或界面控制开关链路显示
+- 可通过命令行参数`--no-links`或界面控制开关链路显示
 
 ### 3.5 路由功能
 
 - 支持右键选择源节点和目标节点
-- 自动计算并显示最优路由路径
+- 通过HTTP API自动计算并显示最优路由路径
 - 路径以高亮颜色显示，并带有方向箭头
 - 支持四种路由类型：卫星到卫星、卫星到地面站、地面站到卫星、地面站到地面站
-- 路径实时更新，随卫星位置变化而调整
+- 路径实时更新，随卫星位置变化而调整，更新频率受`ROUTE_MIN_UPDATE_INTERVAL`控制
+- 路由请求失败时自动回退到直接连接路径
 
 ### 3.6 状态信息显示
 
 - 屏幕顶部显示全局信息：仿真时间、进度、活跃卫星数等
 - 进度条直观显示仿真进度
 - 实时更新链路数量和活跃卫星数量
-- 支持自定义文本样式和位置
+- 支持自定义文本样式和位置，通过`TEXT_COLOR`、`TEXT_SIZE`等常量控制
 
 ### 3.7 交互功能
 
@@ -137,7 +138,7 @@ Celestial的可视化系统由以下五个核心模块组成，每个模块负�
 - 鼠标右键设置路由源点和目标点
 - 鼠标滚轮缩放视图
 - 鼠标拖拽旋转视图
-- 键盘快捷键控制仿真（暂停/继续、加速/减速）
+- 键盘快捷键控制仿真（如数字键1重置路由路径选择）
 
 ## 4. 使用指南
 
@@ -145,10 +146,10 @@ Celestial的可视化系统由以下五个核心模块组成，每个模块负�
 
 ```bash
 # 基本启动命令
-python celestial.py --visual <配置文件路径>
+python visualized_celestial.py <配置文件路径>
 
 # 完整参数示例
-python celestial.py --visual config.zip --hosts 127.0.0.1 --no-links --frequency 10 -v
+python visualized_celestial.py config.zip 127.0.0.1 --no-links --frequency 10 -v
 ```
 
 ### 4.2 命令行参数
@@ -181,7 +182,7 @@ python celestial.py --visual config.zip --hosts 127.0.0.1 --no-links --frequency
 2. 右键点击第二个节点（目标节点）
 3. 系统自动计算并显示路由路径
 4. 路径将随卫星位置变化而更新
-5. 点击空白区域取消路由显示
+5. 点击空白区域或按数字键1取消路由显示
 
 #### 4.3.3 SSH连接
 1. 左键点击卫星或地面站
@@ -194,17 +195,28 @@ python celestial.py --visual config.zip --hosts 127.0.0.1 --no-links --frequency
 可以通过修改`animation_constants.py`文件自定义视觉效果：
 
 ```python
-# 示例：修改卫星颜色和大小
-SAT_COLORS = [
-    (1.0, 0.0, 0.0),  # 红色 - Shell 0
-    (0.0, 1.0, 0.0),  # 绿色 - Shell 1
-    (0.0, 0.0, 1.0),  # 蓝色 - Shell 2
-]
+# 卫星点大小
 SAT_POINT_SIZE = 10  # 增大卫星点大小
 
-# 示例：修改链路样式
-ISL_LINK_COLOR = (1.0, 1.0, 0.0)  # 黄色链路
+# 卫星透明度
+SAT_OPACITY = 1.0  # 活跃卫星透明度
+SAT_INACTIVE_OPACITY = 0.5  # 非活跃卫星透明度
+
+# 链路样式
+ISL_LINK_COLOR = (0.9, 0.5, 0.1)  # 星间链路颜色
+ISL_LINK_OPACITY = 1.0  # 星间链路透明度
 ISL_LINE_WIDTH = 2  # 增加线宽
+
+# 地面站链路样式
+GST_LINK_COLOR = (0.5, 0.9, 0.5)  # 地面站链路颜色
+GST_LINK_OPACITY = 0.75  # 地面站链路透明度
+GST_LINE_WIDTH = 2  # 地面站链路线宽
+
+# 路由路径样式
+ROUTE_PATH_COLOR = (1.0, 0.0, 0.0)  # 路由路径颜色
+ROUTE_PATH_OPACITY = 1.0  # 路由路径透明度
+ROUTE_PATH_WIDTH = 4  # 路由路径线宽
+ROUTE_PATH_ARROW_SIZE = 12  # 路由路径箭头大小
 ```
 
 ## 5. 模块详解
@@ -218,18 +230,22 @@ ISL_LINE_WIDTH = 2  # 增加线宽
 - 更新卫星位置和链路状态
 - 处理用户交互事件
 - 协调其他模块的工作
+- 管理路由路径的请求和显示
 
 **关键方法**：
 - `__init__`：初始化Animation对象
-- `makeRenderWindow`：创建渲染窗口
+- `makeRenderWindow`：创建渲染窗口和视觉元素
 - `updateAnimation`：更新动画状态
-- `showRoutePath`：显示路由路径
-- `handleLeftClick`：处理左键点击事件
+- `updateRoutePath`：更新路由路径请求
+- `displayRoutePath`：显示路由路径
+- `showRoutePath`：计算并显示路由路径
+- `clearRoutePath`：清除路由路径
 
 **与其他模块的关系**：
 - 持有AnimationUI、AnimationActors和AnimationConstellation的实例
 - 向AnimationActors提供数据更新
 - 接收AnimationUI的交互事件
+- 通过进程间通信与AnimationConstellation交换数据
 
 ### 5.2 AnimationActors模块（animation_actors.py）
 
@@ -242,7 +258,11 @@ ISL_LINE_WIDTH = 2  # 增加线宽
 
 **关键方法**：
 - `createEarthActor`：创建地球模型
-- `createSatelliteActors`：创建卫星视觉元素
+- `makeSatsActor`：创建活跃卫星视觉元素
+- `makeInactiveSatsActor`：创建非活跃卫星视觉元素
+- `makeLinkActors`：创建星间链路
+- `makeGstActor`：创建地面站
+- `makeGstLinkActor`：创建地面站链路
 - `updateSatPositions`：更新卫星位置
 - `updateLinks`：更新链路显示
 - `updateGstLinks`：更新地面站链路
@@ -263,9 +283,15 @@ ISL_LINE_WIDTH = 2  # 增加线宽
 **关键方法**：
 - `makeInfoTextActors`：创建信息文本
 - `updateInfoText`：更新信息显示
+- `makeProgressBar`：创建进度条
+- `updateProgressBar`：更新进度条
 - `makeInfoPanel`：创建信息面板
 - `updateSatelliteInfoPanel`：更新卫星信息面板
+- `updateGroundStationInfoPanel`：更新地面站信息面板
+- `handleClick`：处理左键点击事件
 - `handleRightClick`：处理右键点击（路由选择）
+- `handleKeyPress`：处理键盘事件
+- `executeSSHCommand`：执行SSH连接命令
 
 **与其他模块的关系**：
 - 持有对Animation的引用
@@ -279,16 +305,18 @@ ISL_LINE_WIDTH = 2  # 增加线宽
 **主要功能**：
 - 更新卫星位置
 - 处理路由请求
-- 计算最优路径
+- 通过HTTP API计算最优路径
 
 **关键方法**：
-- `updatePositions`：更新卫星位置
-- `requestRoute`：请求路由路径
-- `getRoutePath`：获取路由路径
+- `step`：更新星座状态
+- `get_route_path`：获取路由路径
+- `handle_control_message`：处理来自Animation的控制消息
+- `_get_node_info`：获取节点的shell和ID信息
 
 **与其他模块的关系**：
-- 被Animation模块调用
+- 被Animation模块通过进程间通信调用
 - 提供路由数据给Animation模块
+- 使用HTTP API获取路由信息
 
 ### 5.5 AnimationConstants模块（animation_constants.py）
 
@@ -299,6 +327,8 @@ ISL_LINE_WIDTH = 2  # 增加线宽
 - 大小和透明度设置
 - 界面布局参数
 - 性能相关常量
+- 路由更新相关常量
+- SSH连接相关常量
 
 **与其他模块的关系**：
 - 被所有其他模块引用
@@ -309,17 +339,20 @@ ISL_LINE_WIDTH = 2  # 增加线宽
 ### 6.1 渲染优化
 - 使用点精灵（vtkPointSprite）减少卫星渲染开销
 - 非活跃卫星使用透明度降低渲染负担
-- 支持动态调整地球模型精度
+- 路由路径节点数量限制，防止过长路径导致性能问题
+- 使用纹理贴图提高地球渲染质量和性能
 
 ### 6.2 计算优化
 - 使用列表推导式优化活跃卫星和链路计算
 - 避免重复计算，如在updateInfoText方法中接受预计算的参数
-- 使用缓存减少重复计算
+- 路由请求设置最小更新间隔，避免频繁请求
+- 路由请求失败时使用回退机制，确保系统稳定性
 
 ### 6.3 交互优化
 - 使用vtkCellPicker提高选择精度
 - 信息面板延迟创建，减少初始化时间
 - 按需更新视觉元素
+- 路由请求异步处理，避免阻塞UI线程
 
 ## 7. 扩展开发
 
@@ -379,7 +412,7 @@ def handleMiddleClick(self, obj, event):
 可以通过修改AnimationConstellation模块中的路由请求方法，实现自定义路由算法：
 
 ```python
-def requestCustomRoute(self, source_type, source_id, target_type, target_id):
+def get_route_path(self, source_index, target_index):
     """使用自定义算法计算路由路径"""
     # 实现自定义路由算法
     # ...
@@ -397,6 +430,7 @@ def requestCustomRoute(self, source_type, source_id, target_type, target_id):
   - 增加非活跃卫星的透明度
   - 降低地球模型精度
   - 减少链路显示数量
+  - 使用`--no-links`参数禁用链路显示
 
 ### 8.2 交互问题
 - **问题**：难以选中特定卫星
@@ -408,9 +442,11 @@ def requestCustomRoute(self, source_type, source_id, target_type, target_id):
 ### 8.3 路由问题
 - **问题**：路由路径不显示或显示不正确
 - **解决方案**：
-  - 确认API服务正常运行
+  - 确认API服务正常运行（默认URL为`http://127.0.0.1`）
   - 检查源节点和目标节点是否正确设置
   - 尝试重新选择源节点和目标节点
+  - 按数字键1重置路由选择
+  - 检查网络连接是否正常
 
 ## 9. 未来发展
 
@@ -420,12 +456,14 @@ def requestCustomRoute(self, source_type, source_id, target_type, target_id):
 - 增强路由可视化效果
 - 支持3D模型替代点精灵
 - 添加时间控制面板
+- 支持自定义地球纹理
 
 ### 9.2 架构改进
 - 引入事件系统，减少模块间直接依赖
 - 优化渲染管线，提高性能
 - 增强异常处理机制
 - 添加单元测试和集成测试
+- 改进路由API接口，支持更复杂的路由策略
 
 ---
 
