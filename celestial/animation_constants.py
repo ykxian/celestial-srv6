@@ -54,6 +54,14 @@ EARTH_TEXTURE_PATH = "/home/ubuntu/celestial/celestial/earth_texture.jpg"  # 地
 SAT_POINT_SIZE = 8  # how big satellites are in (probably) screen pixels
 GST_POINT_SIZE = 8  # how big ground points are in (probably) screen pixels
 
+# 卫星LOD（Level of Detail）相关常量
+SAT_LOD_DISTANCE = 15000000  # 卫星模型切换距离阈值（米）
+SAT_MODEL_SIZE = 100000  # 卫星模型大小（米）- 减小尺寸
+SAT_ANTENNA_SIZE = 70000  # 卫星天线大小（米）- 减小尺寸
+SAT_ANTENNA_COLOR = (0.9, 0.9, 0.0)  # 卫星天线颜色（黄色）
+SAT_SOLAR_PANEL_COLOR = (0.1, 0.1, 0.6)  # 太阳能板颜色（深蓝色）
+SAT_DISH_COLOR = (0.8, 0.8, 0.8)  # 接收器颜色（银色）
+
 SECONDS_PER_DAY = 86400  # number of seconds per earth rotation (day)
 
 # 文本显示相关常量
