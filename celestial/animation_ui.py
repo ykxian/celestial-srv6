@@ -75,7 +75,23 @@ class AnimationUI:
             active_satellites = 0
             for s in range(self.animation.num_shells):
                 for i in range(self.animation.shell_sats[s]):
-                    if self.animation.sat_positions[s][i]["in_bbox"]:
+                    # 处理numpy.void类型和字典类型
+                    try:
+                        # 如果是字典类型
+                        if hasattr(self.animation.sat_positions[s][i], 'get'):
+                            if self.animation.sat_positions[s][i].get("in_bbox", True):
+                                active_satellites += 1
+                        # 如果是numpy.void类型
+                        elif hasattr(self.animation.sat_positions[s][i], 'item'):
+                            if 'in_bbox' in self.animation.sat_positions[s].dtype.names and self.animation.sat_positions[s][i]['in_bbox']:
+                                active_satellites += 1
+                            else:
+                                active_satellites += 1  # 如果没有in_bbox字段，默认计数
+                        else:
+                            active_satellites += 1  # 其他情况，默认计数
+                    except Exception as e:
+                        print(f"计算活跃卫星数时出错: {e}")
+                        # 出错时默认计数该卫星
                         active_satellites += 1
         self.animation.active_satellites = active_satellites
         
@@ -346,9 +362,9 @@ class AnimationUI:
 
     def setupPicker(self) -> None:
         """设置点击拾取器"""
-        # 创建点拾取器
-        picker = vtk.vtkPointPicker()
-        picker.SetTolerance(0.0009)  # 增加容差，使点击更容易命中
+        # 使用vtkCellPicker代替vtkPropPicker，更适合检测网格和单元格
+        picker = vtk.vtkCellPicker()
+        picker.SetTolerance(0.05)  # 保持原有容差设置
         self.interactor.SetPicker(picker)
 
         # 添加点击事件回调
@@ -397,7 +413,80 @@ class AnimationUI:
         # 使用拾取器检测点击的对象
         picker = self.interactor.GetPicker()
         
-        # 首先尝试检测地面站（设置更高的优先级）
+        # 首先尝试检测卫星点云（设置最高优先级）
+        # 这是因为vtkPropPicker可能无法很好地拾取点云，所以我们使用屏幕坐标计算
+        clickPos = self.interactor.GetEventPosition()
+        closest_sat_shell = -1
+        closest_sat_id = -1
+        min_screen_distance = 20  # 屏幕像素距离阈值
+        
+        # 遍历所有shell中的卫星
+        for s in range(self.animation.num_shells):
+            if s >= len(self.animation.actors.shell_actors):
+                continue
+                
+            # 获取点云数据
+            points = None
+            if hasattr(self.animation.actors.shell_actors[s], 'satVtkPts'):
+                points = self.animation.actors.shell_actors[s].satVtkPts
+            elif hasattr(self.animation.actors.shell_inactive_actors[s], 'satVtkPts'):
+                points = self.animation.actors.shell_inactive_actors[s].satVtkPts
+                
+            if not points:
+                continue
+                
+            # 检查每个卫星点
+            for i in range(min(self.animation.shell_sats[s], points.GetNumberOfPoints())):
+                # 只检查在视图范围内的卫星
+                # 处理numpy.void类型和字典类型
+                try:
+                    # 如果是字典类型
+                    if hasattr(self.animation.sat_positions[s][i], 'get'):
+                        if not self.animation.sat_positions[s][i].get("in_bbox", True):
+                            continue
+                    # 如果是numpy.void类型
+                    elif hasattr(self.animation.sat_positions[s][i], 'item'):
+                        if 'in_bbox' in self.animation.sat_positions[s].dtype.names and not self.animation.sat_positions[s][i]['in_bbox']:
+                            continue
+                    # 其他情况，默认显示
+                except Exception as e:
+                    print(f"检查卫星可见性时出错: {e}")
+                    # 出错时默认显示该卫星
+                    pass
+                    
+                # 获取卫星世界坐标
+                sat_world_pos = [0, 0, 0]
+                points.GetPoint(i, sat_world_pos)
+                
+                # 转换为屏幕坐标
+                coordinate = vtk.vtkCoordinate()
+                coordinate.SetCoordinateSystemToWorld()
+                coordinate.SetValue(sat_world_pos[0], sat_world_pos[1], sat_world_pos[2])
+                sat_screen_pos = coordinate.GetComputedDisplayValue(self.renderer)
+                
+                if not sat_screen_pos:
+                    continue
+                    
+                # 计算屏幕距离
+                screen_dist = ((clickPos[0] - sat_screen_pos[0])**2 + 
+                              (clickPos[1] - sat_screen_pos[1])**2)**0.5
+                
+                # 如果距离小于阈值且小于当前最小距离
+                if screen_dist < min_screen_distance:
+                    min_screen_distance = screen_dist
+                    closest_sat_shell = s
+                    closest_sat_id = i
+        
+        # 如果找到了最近的卫星，直接选中它
+        if closest_sat_shell >= 0 and closest_sat_id >= 0:
+            print(f"点击了卫星：shell {closest_sat_shell+1}, id {closest_sat_id}")
+            self.animation.selected_object = "satellite"
+            self.animation.selected_shell = closest_sat_shell
+            self.animation.selected_id = closest_sat_id
+            self.updateSatelliteInfoPanel(closest_sat_shell, closest_sat_id)
+            return
+            
+        # 然后尝试检测地面站
         # 遍历所有地面站点，检查点击位置是否在地面站附近
         for gst_id in range(self.animation.gst_num):
             # 获取地面站的世界坐标 - 直接从地面站演员获取最新位置
@@ -419,40 +508,31 @@ class AnimationUI:
             if (gst_screen_pos and
                  abs(clickPos[0] - gst_screen_pos[0]) < 15 and
                 abs(clickPos[1] - gst_screen_pos[1]) < 15):
+                print(f"点击了地面站: id={gst_id}")
                 self.animation.selected_object = "groundstation"
                 self.animation.selected_shell = -1
                 self.animation.selected_id = gst_id
                 self.updateGroundStationInfoPanel(gst_id)
                 return
-                
-        # 如果没有点击地面站，再检查卫星
-        picker.Pick(clickPos[0], clickPos[1], 0, self.renderer)
         
-        # 获取拾取的演员和点ID
+        # 获取拾取的演员（vtkCellPicker返回的是vtkActor）
         actor = picker.GetActor()
-        point_id = picker.GetPointId()
-        
+         
         if actor is None:
             # 如果点击空白处，隐藏信息面板
             self.hideInfoPanel()
             return
-            
-        # 检查是否点击了卫星
-        for s in range(self.animation.num_shells):
-            if ((actor == self.animation.actors.shell_actors[s].satsActor or
-                  actor == self.animation.actors.shell_inactive_actors[s].satsActor) and
-                point_id >= 0 and point_id < self.animation.shell_sats[s]):
-                self.animation.selected_object = "satellite"
-                self.animation.selected_shell = s
-                self.animation.selected_id = point_id
-                self.updateSatelliteInfoPanel(s, point_id)
-                return
-                
-        # 如果点击了其他对象，隐藏信息面板
+        
+        # 如果到达这里，说明点击了其他对象
+        print(f"点击了未识别对象: {actor}")
         self.hideInfoPanel()
         
     def handleRightClick(self, obj: typing.Any, event: typing.Any) -> None:
         """处理鼠标右键点击事件"""
+        # 获取点击位置
+        clickPos = self.interactor.GetEventPosition()
+        print(f"右键点击位置: x={clickPos[0]}, y={clickPos[1]}")
+        
         # 如果已经有请求挂起，不处理新的点击
         if hasattr(self.animation, 'route_request_pending') and self.animation.route_request_pending:
             print("路由请求正在处理中，请稍候...")
@@ -479,7 +559,97 @@ class AnimationUI:
         # 获取拾取器
         picker = self.interactor.GetPicker()
         
-        # 首先尝试检测地面站（设置更高的优先级）
+        # 首先尝试检测卫星点云（设置最高优先级）
+        # 这是因为vtkPropPicker可能无法很好地拾取点云，所以我们使用屏幕坐标计算
+        clickPos = self.interactor.GetEventPosition()
+        closest_sat_shell = -1
+        closest_sat_id = -1
+        min_screen_distance = 20  # 屏幕像素距离阈值
+        
+        # 遍历所有shell中的卫星
+        for s in range(self.animation.num_shells):
+            if s >= len(self.animation.actors.shell_actors):
+                continue
+                
+            # 获取点云数据
+            points = None
+            if hasattr(self.animation.actors.shell_actors[s], 'satVtkPts'):
+                points = self.animation.actors.shell_actors[s].satVtkPts
+            elif hasattr(self.animation.actors.shell_inactive_actors[s], 'satVtkPts'):
+                points = self.animation.actors.shell_inactive_actors[s].satVtkPts
+                
+            if not points:
+                continue
+                
+            # 检查每个卫星点
+            for i in range(min(self.animation.shell_sats[s], points.GetNumberOfPoints())):
+                # 只检查在视图范围内的卫星
+                # 处理numpy.void类型和字典类型
+                try:
+                    # 如果是字典类型
+                    if hasattr(self.animation.sat_positions[s][i], 'get'):
+                        if not self.animation.sat_positions[s][i].get("in_bbox", True):
+                            continue
+                    # 如果是numpy.void类型
+                    elif hasattr(self.animation.sat_positions[s][i], 'item'):
+                        if 'in_bbox' in self.animation.sat_positions[s].dtype.names and not self.animation.sat_positions[s][i]['in_bbox']:
+                            continue
+                    # 其他情况，默认显示
+                except Exception as e:
+                    print(f"检查卫星可见性时出错: {e}")
+                    # 出错时默认显示该卫星
+                    pass
+                    
+                # 获取卫星世界坐标
+                sat_world_pos = [0, 0, 0]
+                points.GetPoint(i, sat_world_pos)
+                
+                # 转换为屏幕坐标
+                coordinate = vtk.vtkCoordinate()
+                coordinate.SetCoordinateSystemToWorld()
+                coordinate.SetValue(sat_world_pos[0], sat_world_pos[1], sat_world_pos[2])
+                sat_screen_pos = coordinate.GetComputedDisplayValue(self.renderer)
+                
+                if not sat_screen_pos:
+                    continue
+                    
+                # 计算屏幕距离
+                screen_dist = ((clickPos[0] - sat_screen_pos[0])**2 + 
+                              (clickPos[1] - sat_screen_pos[1])**2)**0.5
+                
+                # 如果距离小于阈值且小于当前最小距离
+                if screen_dist < min_screen_distance:
+                    min_screen_distance = screen_dist
+                    closest_sat_shell = s
+                    closest_sat_id = i
+        
+        # 如果找到了最近的卫星，直接选中它
+        if closest_sat_shell >= 0 and closest_sat_id >= 0:
+            # print(f"右键点击了卫星点云（屏幕坐标检测）：shell {closest_sat_shell}, id {closest_sat_id}, 屏幕距离: {min_screen_distance}")
+            # 如果没有选择起点，则设置为起点
+            if self.animation.route_source_type is None:
+                self.animation.route_source_type = "satellite"
+                self.animation.route_source_shell = closest_sat_shell
+                self.animation.route_source_id = closest_sat_id
+                print(f"Selected satellite {closest_sat_shell+1}-{closest_sat_id} as route source")
+                return
+            # 如果已有起点，则计算并显示路径
+            else:
+                self.animation.route_target_type = "satellite"
+                self.animation.route_target_shell = closest_sat_shell
+                self.animation.route_target_id = closest_sat_id
+                # 调用Animation类中的showRoutePath方法
+                self.animation.showRoutePath(
+                    self.animation.route_source_type,
+                    self.animation.route_source_shell,
+                    self.animation.route_source_id,
+                    self.animation.route_target_type,
+                    self.animation.route_target_shell,
+                    self.animation.route_target_id
+                )
+                return
+        
+        # 然后尝试检测地面站（设置更高的优先级）
         # 遍历所有地面站点，检查点击位置是否在地面站附近
         for gst_id in range(self.animation.gst_num):
             # 获取地面站的世界坐标 - 直接从地面站演员获取最新位置
@@ -523,44 +693,9 @@ class AnimationUI:
                         self.animation.route_target_id
                     )
                     return
-                
-        # 如果没有点击地面站，再检查卫星
-        picker.Pick(clickPos[0], clickPos[1], 0, self.renderer)
-        
-        # 获取拾取的演员和点ID
-        actor = picker.GetActor()
-        point_id = picker.GetPointId()
         
         if actor is None:
             return
-            
-        # 检查是否右键点击了卫星
-        for s in range(self.animation.num_shells):
-            if ((actor == self.animation.actors.shell_actors[s].satsActor or
-                  actor == self.animation.actors.shell_inactive_actors[s].satsActor) and
-                point_id >= 0 and point_id < self.animation.shell_sats[s]):
-                # 如果没有选择起点，则设置为起点
-                if self.animation.route_source_type is None:
-                    self.animation.route_source_type = "satellite"
-                    self.animation.route_source_shell = s
-                    self.animation.route_source_id = point_id
-                    print(f"Selected satellite {s}-{point_id} as route source")
-                    return
-                # 如果已有起点，则计算并显示路径
-                else:
-                    self.animation.route_target_type = "satellite"
-                    self.animation.route_target_shell = s
-                    self.animation.route_target_id = point_id
-                    # 调用Animation类中的showRoutePath方法
-                    self.animation.showRoutePath(
-                        self.animation.route_source_type,
-                        self.animation.route_source_shell,
-                        self.animation.route_source_id,
-                        self.animation.route_target_type,
-                        self.animation.route_target_shell,
-                        self.animation.route_target_id
-                    )
-                    return
 
     def updateSatelliteInfoPanel(self, shell: int, sat_id: int) -> None:
         """更新卫星信息面板"""
@@ -569,11 +704,31 @@ class AnimationUI:
 
         # 获取卫星信息
         sat = self.animation.sat_positions[shell][sat_id]
+        # 创建一个字典来存储卫星信息，确保统一访问方式
+        sat_info = {}
+        try:
+            # 如果是字典类型
+            if hasattr(sat, 'get'):
+                for key in sat.keys():
+                    sat_info[key] = sat[key]
+            # 如果是numpy.void类型
+            elif hasattr(sat, 'item'):
+                for name in self.animation.sat_positions[shell].dtype.names:
+                    sat_info[name] = sat[name]
+            else:
+                # 其他情况，尝试直接转换为字典
+                sat_info = dict(sat)
+        except Exception as e:
+            print(f"处理卫星信息时出错: {e}")
+            # 创建基本信息
+            sat_info = {'ID': sat_id}
 
         # 计算卫星IP地址 - 确保使用正确的shell标识符
         # 使用shell确保IP地址计算与显示的SHELL-ID一致
         ipv6 = self.calculateIPv6(shell + 1, sat_id)  # shell_identifier从1开始
         ipv4 = self.calculateIPv4(shell + 1, sat_id)
+        
+        # 使用sat_info代替sat，确保统一访问方式
 
         # 固定面板位置在屏幕右上角
         window_size = self.renderWindow.GetSize()
@@ -586,9 +741,34 @@ class AnimationUI:
         # 确保使用正确的shell和sat_id，这里使用当前点击的卫星的实际索引
         self.info_panel_text_actors[1].SetInput(f"SHELL-ID: {shell+1}-{sat_id}")
         self.info_panel_text_actors[2].SetInput(f"IPv6: {ipv6}")
+        
+        # 显示IPv4地址
         self.info_panel_text_actors[3].SetInput(f"IPv4: {ipv4}")
-        self.info_panel_text_actors[4].SetInput(f"Position: ({sat['x']:.0f}, {sat['y']:.0f}, {sat['z']:.0f})")
-        self.info_panel_text_actors[5].SetInput(f"Status: {'Active' if sat['in_bbox'] else 'Inactive'}")
+        
+        # 使用sat_info显示位置信息
+        try:
+            if 'x' in sat_info and 'y' in sat_info and 'z' in sat_info:
+                self.info_panel_text_actors[4].SetInput(f"Position: ({sat_info['x']:.0f}, {sat_info['y']:.0f}, {sat_info['z']:.0f})")
+            elif hasattr(sat, 'item') and all(attr in self.animation.sat_positions[shell].dtype.names for attr in ['x', 'y', 'z']):
+                self.info_panel_text_actors[4].SetInput(f"Position: ({sat['x']:.0f}, {sat['y']:.0f}, {sat['z']:.0f})")
+            else:
+                self.info_panel_text_actors[4].SetInput(f"Position: Unknown")
+        except Exception as e:
+            print(f"显示卫星位置信息时出错: {e}")
+            self.info_panel_text_actors[4].SetInput(f"Position: Unknown")
+        # 显示卫星状态
+        try:
+            if hasattr(sat, 'get'):
+                is_active = sat.get('in_bbox', False)
+            elif hasattr(sat, 'item') and 'in_bbox' in self.animation.sat_positions[shell].dtype.names:
+                is_active = bool(sat['in_bbox'])
+            else:
+                is_active = 'in_bbox' in sat_info and sat_info['in_bbox']
+                
+            self.info_panel_text_actors[5].SetInput(f"Status: {'Active' if is_active else 'Inactive'}")
+        except Exception as e:
+            print(f"显示卫星状态时出错: {e}")
+            self.info_panel_text_actors[5].SetInput(f"Status: Unknown")
 
         # 调整面板大小以容纳SSH按钮
         panel_height = 6 * INFO_PANEL_LINE_HEIGHT + INFO_PANEL_SSH_BTN_HEIGHT + 3 * INFO_PANEL_PADDING
