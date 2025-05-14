@@ -505,7 +505,7 @@ class AnimationActors:
             bodySource = vtk.vtkCylinderSource()
             bodySource.SetHeight(SAT_MODEL_SIZE * 0.8)
             bodySource.SetRadius(SAT_MODEL_SIZE * 0.4)
-            bodySource.SetResolution(16)  # 提高分辨率使其更圆滑
+            bodySource.SetResolution(8)  # 降低分辨率以提高性能
             
             # 创建太阳能板（扁平长方体）
             solarPanel1 = vtk.vtkCubeSource()
@@ -522,14 +522,14 @@ class AnimationActors:
             antennaSource = vtk.vtkConeSource()
             antennaSource.SetHeight(SAT_MODEL_SIZE * 0.6)
             antennaSource.SetRadius(SAT_MODEL_SIZE * 0.2)
-            antennaSource.SetResolution(12)  # 提高分辨率
+            antennaSource.SetResolution(6)  # 降低分辨率以提高性能
             antennaSource.SetDirection(0, 1, 0)  # 指向Y轴正方向
             
             # 创建天线碟形接收器（扁平球体）
             dishSource = vtk.vtkSphereSource()
             dishSource.SetRadius(SAT_MODEL_SIZE * 0.3)
-            dishSource.SetThetaResolution(16)
-            dishSource.SetPhiResolution(16)
+            dishSource.SetThetaResolution(8)  # 降低分辨率以提高性能
+            dishSource.SetPhiResolution(8)  # 降低分辨率以提高性能
             dishSource.SetStartTheta(0)
             dishSource.SetEndTheta(180)  # 半球形
             
@@ -714,8 +714,22 @@ class AnimationActors:
                         (sat_y - camera_pos[1])**2 + 
                         (sat_z - camera_pos[2])**2)**0.5
             
-            # 根据距离决定使用点精灵还是3D模型
-            use_model = distance < SAT_LOD_DISTANCE and i < len(in_bbox) and in_bbox[i]
+            # 根据距离决定使用点精灵还是3D模型，添加缓冲区逻辑避免频繁切换
+            # 检查当前模型可见性状态
+            current_visible = False
+            if shell_no < len(self.shell_actors) and hasattr(self.shell_actors[shell_no], 'satModelVisible') and \
+               i < len(self.shell_actors[shell_no].satModelVisible):
+                current_visible = self.shell_actors[shell_no].satModelVisible[i]
+            
+            # 使用不同的距离阈值进行切换，形成滞后效应（缓冲区）
+            # 如果当前是点精灵，使用较小的阈值切换到3D模型
+            # 如果当前是3D模型，使用较大的阈值切换到点精灵
+            if current_visible:
+                # 当前是3D模型，使用较大阈值决定是否切换回点精灵
+                use_model = distance < (SAT_LOD_DISTANCE * 1.2) and i < len(in_bbox) and in_bbox[i]
+            else:
+                # 当前是点精灵，使用较小阈值决定是否切换到3D模型
+                use_model = distance < (SAT_LOD_DISTANCE * 0.8) and i < len(in_bbox) and in_bbox[i]
             
             # 更新3D模型可见性和位置
             if shell_no < len(self.shell_actors) and hasattr(self.shell_actors[shell_no], 'satModelActors') and \
