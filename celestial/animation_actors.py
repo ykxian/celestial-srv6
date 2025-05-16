@@ -36,6 +36,11 @@ class ShellActor:
     satModels: typing.List = None  # 存储卫星3D模型的列表
     satModelActors: typing.List = None  # 存储卫星3D模型演员的列表
     satModelVisible: typing.List = None  # 存储卫星3D模型可见性的列表
+    # 实例化渲染相关
+    satModelPoints: typing.Any = None  # 实例化渲染的点数据
+    satModelDirections: typing.Any = None  # 实例化渲染的方向数据
+    satModelVisibility: typing.Any = None  # 实例化渲染的可见性数据
+    satModelGlyph: typing.Any = None  # 实例化渲染的Glyph对象
 
 @dataclass
 class LinkActor:
@@ -487,201 +492,261 @@ class AnimationActors:
 
     def createSatelliteModels(self, shell_no: int, shell_total_sats: int, sat_positions, sat_color) -> None:
         """
-        创建卫星3D模型（卫星主体+太阳能板+天线）
+        创建卫星3D模型（卫星主体+太阳能板+天线）- 使用实例化渲染优化
         
         :param shell_no: 壳层索引
         :param shell_total_sats: 壳层中的卫星总数
         :param sat_positions: 卫星位置数据
         :param sat_color: 卫星颜色
         """
+        # 获取相机位置，用于初始LOD计算
+        camera_pos = self.camera.GetPosition() if self.camera else (0, 0, 0)
         # 初始化模型列表
         self.shell_actors[shell_no].satModels = []
         self.shell_actors[shell_no].satModelActors = []
         self.shell_actors[shell_no].satModelVisible = [False] * shell_total_sats
         
-        # 为每个卫星创建3D模型
+        # 创建一个共享的卫星模型几何体
+        # 创建卫星主体（圆柱体）
+        bodySource = vtk.vtkCylinderSource()
+        bodySource.SetHeight(SAT_MODEL_SIZE * 0.8)
+        bodySource.SetRadius(SAT_MODEL_SIZE * 0.4)
+        bodySource.SetResolution(8)  # 降低分辨率以提高性能
+        
+        # 创建太阳能板（扁平长方体）
+        solarPanel1 = vtk.vtkCubeSource()
+        solarPanel1.SetXLength(SAT_MODEL_SIZE * 2.5)  # 长
+        solarPanel1.SetYLength(SAT_MODEL_SIZE * 0.05)  # 薄
+        solarPanel1.SetZLength(SAT_MODEL_SIZE * 0.8)   # 宽
+        
+        solarPanel2 = vtk.vtkCubeSource()
+        solarPanel2.SetXLength(SAT_MODEL_SIZE * 2.5)  # 长
+        solarPanel2.SetYLength(SAT_MODEL_SIZE * 0.05)  # 薄
+        solarPanel2.SetZLength(SAT_MODEL_SIZE * 0.8)   # 宽
+        
+        # 创建天线（圆锥体）
+        antennaSource = vtk.vtkConeSource()
+        antennaSource.SetHeight(SAT_MODEL_SIZE * 0.6)
+        antennaSource.SetRadius(SAT_MODEL_SIZE * 0.2)
+        antennaSource.SetResolution(6)  # 降低分辨率以提高性能
+        antennaSource.SetDirection(0, 1, 0)  # 指向Y轴正方向
+        
+        # 创建天线碟形接收器（扁平球体）
+        dishSource = vtk.vtkSphereSource()
+        dishSource.SetRadius(SAT_MODEL_SIZE * 0.3)
+        dishSource.SetThetaResolution(8)  # 降低分辨率以提高性能
+        dishSource.SetPhiResolution(8)  # 降低分辨率以提高性能
+        dishSource.SetStartTheta(0)
+        dishSource.SetEndTheta(180)  # 半球形
+        
+        # 创建变换过滤器，放置太阳能板
+        panel1Transform = vtk.vtkTransform()
+        panel1Transform.Translate(0, SAT_MODEL_SIZE * 0.8, 0)  # 放在主体右侧
+        panel1Transform.RotateZ(90)  # 旋转使其垂直于主体
+        
+        panel1TransformFilter = vtk.vtkTransformPolyDataFilter()
+        panel1TransformFilter.SetInputConnection(solarPanel1.GetOutputPort())
+        panel1TransformFilter.SetTransform(panel1Transform)
+        
+        panel2Transform = vtk.vtkTransform()
+        panel2Transform.Translate(0, -SAT_MODEL_SIZE * 0.8, 0)  # 放在主体左侧
+        panel2Transform.RotateZ(90)  # 旋转使其垂直于主体
+        
+        panel2TransformFilter = vtk.vtkTransformPolyDataFilter()
+        panel2TransformFilter.SetInputConnection(solarPanel2.GetOutputPort())
+        panel2TransformFilter.SetTransform(panel2Transform)
+        
+        # 创建变换过滤器，放置天线
+        antennaTransform = vtk.vtkTransform()
+        antennaTransform.Translate(0, 0, SAT_MODEL_SIZE * 0.6)  # 放在主体顶部
+        antennaTransform.RotateX(90)  # 旋转使其指向Z轴正方向
+        
+        antennaTransformFilter = vtk.vtkTransformPolyDataFilter()
+        antennaTransformFilter.SetInputConnection(antennaSource.GetOutputPort())
+        antennaTransformFilter.SetTransform(antennaTransform)
+        
+        # 创建变换过滤器，放置接收器
+        dishTransform = vtk.vtkTransform()
+        dishTransform.Translate(0, 0, -SAT_MODEL_SIZE * 0.6)  # 放在主体底部
+        dishTransform.RotateX(180)  # 旋转使开口朝向地球
+        
+        dishTransformFilter = vtk.vtkTransformPolyDataFilter()
+        dishTransformFilter.SetInputConnection(dishSource.GetOutputPort())
+        dishTransformFilter.SetTransform(dishTransform)
+        
+        # 将所有部件组合成一个模型
+        appendFilter = vtk.vtkAppendPolyData()
+        appendFilter.AddInputConnection(bodySource.GetOutputPort())
+        appendFilter.AddInputConnection(panel1TransformFilter.GetOutputPort())
+        appendFilter.AddInputConnection(panel2TransformFilter.GetOutputPort())
+        appendFilter.AddInputConnection(antennaTransformFilter.GetOutputPort())
+        appendFilter.AddInputConnection(dishTransformFilter.GetOutputPort())
+        
+        # 创建一个清理过滤器，确保几何体的完整性
+        cleanFilter = vtk.vtkCleanPolyData()
+        cleanFilter.SetInputConnection(appendFilter.GetOutputPort())
+        cleanFilter.Update()
+        
+        # 创建一个共享的卫星模型几何体
+        satelliteModel = cleanFilter.GetOutput()
+        
+        # 创建点数据源，用于实例化
+        points = vtk.vtkPoints()
+        points.SetNumberOfPoints(shell_total_sats)
+        
+        # 创建方向向量数组，用于指向地球中心
+        directions = vtk.vtkDoubleArray()
+        directions.SetNumberOfComponents(3)
+        directions.SetName("Directions")
+        directions.SetNumberOfTuples(shell_total_sats)
+        
+        # 创建可见性数组
+        visibility = vtk.vtkIntArray()
+        visibility.SetName("Visibility")
+        visibility.SetNumberOfComponents(1)
+        visibility.SetNumberOfTuples(shell_total_sats)
+        
+        # 获取相机位置，用于LOD计算
+        camera_pos = self.camera.GetPosition()
+        
+        # 初始化所有卫星的位置和方向
         for i in range(shell_total_sats):
-            # 创建卫星主体（圆柱体）
-            bodySource = vtk.vtkCylinderSource()
-            bodySource.SetHeight(SAT_MODEL_SIZE * 0.8)
-            bodySource.SetRadius(SAT_MODEL_SIZE * 0.4)
-            bodySource.SetResolution(8)  # 降低分辨率以提高性能
-            
-            # 创建太阳能板（扁平长方体）
-            solarPanel1 = vtk.vtkCubeSource()
-            solarPanel1.SetXLength(SAT_MODEL_SIZE * 2.5)  # 长
-            solarPanel1.SetYLength(SAT_MODEL_SIZE * 0.05)  # 薄
-            solarPanel1.SetZLength(SAT_MODEL_SIZE * 0.8)   # 宽
-            
-            solarPanel2 = vtk.vtkCubeSource()
-            solarPanel2.SetXLength(SAT_MODEL_SIZE * 2.5)  # 长
-            solarPanel2.SetYLength(SAT_MODEL_SIZE * 0.05)  # 薄
-            solarPanel2.SetZLength(SAT_MODEL_SIZE * 0.8)   # 宽
-            
-            # 创建天线（圆锥体）
-            antennaSource = vtk.vtkConeSource()
-            antennaSource.SetHeight(SAT_MODEL_SIZE * 0.6)
-            antennaSource.SetRadius(SAT_MODEL_SIZE * 0.2)
-            antennaSource.SetResolution(6)  # 降低分辨率以提高性能
-            antennaSource.SetDirection(0, 1, 0)  # 指向Y轴正方向
-            
-            # 创建天线碟形接收器（扁平球体）
-            dishSource = vtk.vtkSphereSource()
-            dishSource.SetRadius(SAT_MODEL_SIZE * 0.3)
-            dishSource.SetThetaResolution(8)  # 降低分辨率以提高性能
-            dishSource.SetPhiResolution(8)  # 降低分辨率以提高性能
-            dishSource.SetStartTheta(0)
-            dishSource.SetEndTheta(180)  # 半球形
-            
-            # 创建变换过滤器，放置太阳能板
-            panel1Transform = vtk.vtkTransform()
-            panel1Transform.Translate(0, SAT_MODEL_SIZE * 0.8, 0)  # 放在主体右侧
-            panel1Transform.RotateZ(90)  # 旋转使其垂直于主体
-            
-            panel1TransformFilter = vtk.vtkTransformPolyDataFilter()
-            panel1TransformFilter.SetInputConnection(solarPanel1.GetOutputPort())
-            panel1TransformFilter.SetTransform(panel1Transform)
-            
-            panel2Transform = vtk.vtkTransform()
-            panel2Transform.Translate(0, -SAT_MODEL_SIZE * 0.8, 0)  # 放在主体左侧
-            panel2Transform.RotateZ(90)  # 旋转使其垂直于主体
-            
-            panel2TransformFilter = vtk.vtkTransformPolyDataFilter()
-            panel2TransformFilter.SetInputConnection(solarPanel2.GetOutputPort())
-            panel2TransformFilter.SetTransform(panel2Transform)
-            
-            # 创建变换过滤器，放置天线
-            antennaTransform = vtk.vtkTransform()
-            antennaTransform.Translate(0, 0, SAT_MODEL_SIZE * 0.6)  # 放在主体顶部
-            antennaTransform.RotateX(90)  # 旋转使其指向Z轴正方向
-            
-            antennaTransformFilter = vtk.vtkTransformPolyDataFilter()
-            antennaTransformFilter.SetInputConnection(antennaSource.GetOutputPort())
-            antennaTransformFilter.SetTransform(antennaTransform)
-            
-            # 创建变换过滤器，放置接收器
-            dishTransform = vtk.vtkTransform()
-            dishTransform.Translate(0, 0, -SAT_MODEL_SIZE * 0.6)  # 放在主体底部
-            dishTransform.RotateX(180)  # 旋转使开口朝向地球
-            
-            dishTransformFilter = vtk.vtkTransformPolyDataFilter()
-            dishTransformFilter.SetInputConnection(dishSource.GetOutputPort())
-            dishTransformFilter.SetTransform(dishTransform)
-            
-            # 将所有部件组合成一个模型
-            appendFilter = vtk.vtkAppendPolyData()
-            appendFilter.AddInputConnection(bodySource.GetOutputPort())
-            appendFilter.AddInputConnection(panel1TransformFilter.GetOutputPort())
-            appendFilter.AddInputConnection(panel2TransformFilter.GetOutputPort())
-            appendFilter.AddInputConnection(antennaTransformFilter.GetOutputPort())
-            appendFilter.AddInputConnection(dishTransformFilter.GetOutputPort())
-            
-            # 创建映射器
-            mapper = vtk.vtkPolyDataMapper()
-            mapper.SetInputConnection(appendFilter.GetOutputPort())
-            
-            # 创建演员
-            actor = vtk.vtkActor()
-            actor.SetMapper(mapper)
-            
-            # 创建单独的映射器和演员，以便为不同部件设置不同颜色
-            # 卫星主体
-            bodyMapper = vtk.vtkPolyDataMapper()
-            bodyMapper.SetInputConnection(bodySource.GetOutputPort())
-            bodyActor = vtk.vtkActor()
-            bodyActor.SetMapper(bodyMapper)
-            bodyActor.GetProperty().SetColor(sat_color)  # 使用传入的颜色参数
-            
-            # 太阳能板1
-            panel1Mapper = vtk.vtkPolyDataMapper()
-            panel1Mapper.SetInputConnection(panel1TransformFilter.GetOutputPort())
-            panel1Actor = vtk.vtkActor()
-            panel1Actor.SetMapper(panel1Mapper)
-            panel1Actor.GetProperty().SetColor(SAT_SOLAR_PANEL_COLOR)
-            
-            # 太阳能板2
-            panel2Mapper = vtk.vtkPolyDataMapper()
-            panel2Mapper.SetInputConnection(panel2TransformFilter.GetOutputPort())
-            panel2Actor = vtk.vtkActor()
-            panel2Actor.SetMapper(panel2Mapper)
-            panel2Actor.GetProperty().SetColor(SAT_SOLAR_PANEL_COLOR)
-            
-            # 天线
-            antennaMapper = vtk.vtkPolyDataMapper()
-            antennaMapper.SetInputConnection(antennaTransformFilter.GetOutputPort())
-            antennaActor = vtk.vtkActor()
-            antennaActor.SetMapper(antennaMapper)
-            antennaActor.GetProperty().SetColor(SAT_ANTENNA_COLOR)
-            
-            # 接收器
-            dishMapper = vtk.vtkPolyDataMapper()
-            dishMapper.SetInputConnection(dishTransformFilter.GetOutputPort())
-            dishActor = vtk.vtkActor()
-            dishActor.SetMapper(dishMapper)
-            dishActor.GetProperty().SetColor(SAT_DISH_COLOR)
-            
-            # 创建一个组合演员
-            assembly = vtk.vtkAssembly()
-            assembly.AddPart(bodyActor)
-            assembly.AddPart(panel1Actor)
-            assembly.AddPart(panel2Actor)
-            assembly.AddPart(antennaActor)
-            assembly.AddPart(dishActor)
-            
-            # 添加材质效果到所有部件
-            for part in [bodyActor, panel1Actor, panel2Actor, antennaActor, dishActor]:
-                part.GetProperty().SetAmbient(0.3)
-                part.GetProperty().SetDiffuse(0.7)
-                part.GetProperty().SetSpecular(0.5)
-                part.GetProperty().SetSpecularPower(20)
-            
-            # 初始位置设置
             if i < len(sat_positions):
-                assembly.SetPosition(
-                    sat_positions[i]["x"],
-                    sat_positions[i]["y"],
-                    sat_positions[i]["z"]
-                )
-                
-                # 计算朝向地球中心的方向
                 x = sat_positions[i]["x"]
                 y = sat_positions[i]["y"]
                 z = sat_positions[i]["z"]
+                
+                # 设置位置
+                points.SetPoint(i, x, y, z)
+                
+                # 计算朝向地球中心的方向
                 length = (x**2 + y**2 + z**2)**0.5
                 if length > 0:
                     # 计算从卫星指向地球中心的向量
                     dx = -x/length
                     dy = -y/length
                     dz = -z/length
-                    
-                    # 计算旋转轴和角度
-                    # 默认方向是(0,0,1)，需要旋转到(dx,dy,dz)
-                    default_dir = [0, 0, 1]
-                    target_dir = [dx, dy, dz]
-                    
-                    # 计算旋转轴（叉积）
-                    axis = [
-                        default_dir[1]*target_dir[2] - default_dir[2]*target_dir[1],
-                        default_dir[2]*target_dir[0] - default_dir[0]*target_dir[2],
-                        default_dir[0]*target_dir[1] - default_dir[1]*target_dir[0]
-                    ]
-                    
-                    # 计算旋转角度（点积）
-                    dot_product = default_dir[0]*target_dir[0] + default_dir[1]*target_dir[1] + default_dir[2]*target_dir[2]
-                    angle = 180 * (1 - dot_product) / 3.14159
-                    
-                    # 应用旋转
-                    if abs(axis[0]) + abs(axis[1]) + abs(axis[2]) > 0.001:  # 避免零向量
-                        assembly.RotateWXYZ(angle, axis[0], axis[1], axis[2])
+                    directions.SetTuple3(i, dx, dy, dz)
+                else:
+                    directions.SetTuple3(i, 0, 0, -1)  # 默认朝向
+                
+                # 计算卫星到相机的距离，用于LOD
+                distance = ((x - camera_pos[0])**2 + 
+                           (y - camera_pos[1])**2 + 
+                           (z - camera_pos[2])**2)**0.5
+                
+                # 初始化时，所有卫星模型都设置为不可见
+                # 实际可见性将在updateSatPositions方法中根据in_bbox参数和距离更新
+                # 只有当卫星在活跃区域内且距离相机足够近时才会显示3D模型
+                use_model = False  # 初始化时默认不显示3D模型
+                visibility.SetValue(i, 0)  # 初始化为不可见
+                # 确保初始状态下所有卫星模型都不可见
+                self.shell_actors[shell_no].satModelVisible[i] = use_model
+            else:
+                # 默认位置和方向
+                points.SetPoint(i, 0, 0, 0)
+                directions.SetTuple3(i, 0, 0, -1)
+                visibility.SetValue(i, 0)  # 隐藏
+                self.shell_actors[shell_no].satModelVisible[i] = False
+        
+        # 创建多边形数据对象，包含点和属性
+        polyData = vtk.vtkPolyData()
+        polyData.SetPoints(points)
+        polyData.GetPointData().AddArray(directions)
+        polyData.GetPointData().AddArray(visibility)
+        
+        # 创建实例化渲染器
+        glyph = vtk.vtkGlyph3D()
+        glyph.SetSourceData(satelliteModel)
+        glyph.SetInputData(polyData)
+        glyph.SetVectorModeToUseVector()
+        glyph.SetInputArrayToProcess(1, 0, 0, 0, "Directions")  # 使用方向数组
+        # 设置可见性数组，确保LOD功能正常工作
+        glyph.SetInputArrayToProcess(0, 0, 0, 0, "Visibility")  # 使用可见性数组作为标量数据
+        glyph.OrientOn()
+        # 启用缩放，使用可见性数组控制显示
+        glyph.ScalingOn()
+        # 使用标量模式来控制可见性
+        glyph.SetScaleModeToScaleByScalar()
+        # 设置阈值为0.5，确保只有可见性值为1的卫星才会显示3D模型
+        glyph.SetRange(0.5, 1.5)
+        # 通过可见性数组直接控制实例显示
+        # 设置可见性值为0的卫星将不会显示3D模型
+        # 设置可见性值为1的卫星将会显示3D模型
+        # 确保只有在活跃区域内且距离足够近的卫星才会显示3D模型
+        
+        # 保存glyph对象的引用，以便在updateSatPositions方法中使用
+        self.shell_actors[shell_no].satModelGlyph = glyph
+        
+        # 创建映射器
+        mapper = vtk.vtkPolyDataMapper()
+        mapper.SetInputConnection(glyph.GetOutputPort())
+        
+        # 创建演员
+        actor = vtk.vtkActor()
+        actor.SetMapper(mapper)
+        
+        # 设置材质属性
+        actor.GetProperty().SetAmbient(0.3)
+        actor.GetProperty().SetDiffuse(0.7)
+        actor.GetProperty().SetSpecular(0.5)
+        actor.GetProperty().SetSpecularPower(20)
+        
+        # 设置颜色 - 确保使用壳层的颜色
+        # 使用传入的壳层颜色，确保与点精灵颜色一致
+        if isinstance(sat_color, (list, tuple)) and len(sat_color) >= 3:
+            actor.GetProperty().SetColor(sat_color[0], sat_color[1], sat_color[2])
+        # 确保颜色设置正确，不要全部显示为红色
+        elif isinstance(sat_color, (float, int)) and sat_color >= 0 and sat_color <= 1:
+            # 如果是单个值，假设是灰度值
+            actor.GetProperty().SetColor(sat_color, sat_color, sat_color)
+        else:
+            # 如果颜色格式不正确，使用与点精灵相同的颜色
+            # 获取点精灵的颜色，确保3D模型与点精灵颜色一致
+            point_color = self.shell_actors[shell_no].satsActor.GetProperty().GetColor()
+            actor.GetProperty().SetColor(point_color)
+        
+        # 添加到渲染器
+        self.renderer.AddActor(actor)
+        
+        # 保存模型演员的引用，以便在updateSatPositions方法中使用
+        # 对于实例化渲染，我们只需要一个演员来控制所有卫星模型
+        self.shell_actors[shell_no].satModelActors = [actor]
+        
+        # 初始时所有卫星都使用点精灵表示，不显示3D模型
+        # 获取相机位置，用于LOD计算
+        camera_pos = self.camera.GetPosition()
+        
+        # 初始化所有卫星的可见性为0（不可见）
+        for i in range(shell_total_sats):
+            # 默认不显示3D模型
+            self.shell_actors[shell_no].satModelVisible[i] = False
             
-            # 初始状态为隐藏
-            assembly.VisibilityOff()
-            
-            # 添加到渲染器
-            self.renderer.AddActor(assembly)
-            
-            # 保存到列表
-            self.shell_actors[shell_no].satModelActors.append(assembly)
+            # 更新可见性数组 - 所有值设为0（不可见）
+            visibility.SetValue(i, 0)
+        
+        # 标记可见性数组已修改
+        visibility.Modified()
+        
+        # 确保Glyph更新
+        glyph.Modified()
+        
+        # 确保点精灵可见，并设置3D模型演员为不可见
+        self.shell_actors[shell_no].satsActor.VisibilityOn()
+        self.shell_actors[shell_no].satsActor.GetProperty().SetOpacity(SAT_OPACITY)
+        
+        # 确保3D模型初始状态为不可见，避免一开始就显示所有模型
+        actor.VisibilityOff()
+        
+        # 保存到列表 - 使用单个actor代替多个
+        self.shell_actors[shell_no].satModels = [satelliteModel]
+        self.shell_actors[shell_no].satModelActors = [actor]
+        
+        # 保存点数据和glyph对象，以便后续更新
+        self.shell_actors[shell_no].satModelPoints = points
+        self.shell_actors[shell_no].satModelDirections = directions
+        self.shell_actors[shell_no].satModelVisibility = visibility
+        self.shell_actors[shell_no].satModelGlyph = glyph
 
     def updateSatPositions(self, shell_no: int, sat_positions, in_bbox) -> None:
         """
@@ -701,6 +766,15 @@ class AnimationActors:
         
         # 获取相机位置
         camera_pos = self.camera.GetPosition()
+        
+        # 检查是否使用实例化渲染
+        using_instanced_rendering = hasattr(self.shell_actors[shell_no], 'satModelPoints') and \
+                                  hasattr(self.shell_actors[shell_no], 'satModelDirections') and \
+                                  hasattr(self.shell_actors[shell_no], 'satModelVisibility') and \
+                                  hasattr(self.shell_actors[shell_no], 'satModelGlyph')
+
+        # 跟踪是否有任何卫星使用3D模型
+        any_using_model = False
 
         # 更新每个卫星的位置
         for i in range(len(sat_positions)):
@@ -714,26 +788,66 @@ class AnimationActors:
                         (sat_y - camera_pos[1])**2 + 
                         (sat_z - camera_pos[2])**2)**0.5
             
-            # 根据距离决定使用点精灵还是3D模型，添加缓冲区逻辑避免频繁切换
-            # 检查当前模型可见性状态
-            current_visible = False
-            if shell_no < len(self.shell_actors) and hasattr(self.shell_actors[shell_no], 'satModelVisible') and \
-               i < len(self.shell_actors[shell_no].satModelVisible):
-                current_visible = self.shell_actors[shell_no].satModelVisible[i]
+            # 严格基于两个条件决定是否使用3D模型：
+            # 1. 卫星必须在活跃区域内（in_bbox为True）
+            # 2. 卫星到相机的距离必须小于LOD阈值
+            # 这两个条件必须同时满足才能显示3D模型
+            is_active = i < len(in_bbox) and in_bbox[i] == True
+            is_close_enough = distance < SAT_LOD_DISTANCE
+            # 强制要求两个条件同时满足
+            use_model = is_active and is_close_enough
             
-            # 使用不同的距离阈值进行切换，形成滞后效应（缓冲区）
-            # 如果当前是点精灵，使用较小的阈值切换到3D模型
-            # 如果当前是3D模型，使用较大的阈值切换到点精灵
-            if current_visible:
-                # 当前是3D模型，使用较大阈值决定是否切换回点精灵
-                use_model = distance < (SAT_LOD_DISTANCE * 1.2) and i < len(in_bbox) and in_bbox[i]
-            else:
-                # 当前是点精灵，使用较小阈值决定是否切换到3D模型
-                use_model = distance < (SAT_LOD_DISTANCE * 0.8) and i < len(in_bbox) and in_bbox[i]
+            # 如果这个卫星使用3D模型，记录下来
+            if use_model:
+                any_using_model = True
             
             # 更新3D模型可见性和位置
-            if shell_no < len(self.shell_actors) and hasattr(self.shell_actors[shell_no], 'satModelActors') and \
-               self.shell_actors[shell_no].satModelActors and i < len(self.shell_actors[shell_no].satModelActors):
+            if using_instanced_rendering:
+                # 使用实例化渲染更新位置和方向
+                points = self.shell_actors[shell_no].satModelPoints
+                directions = self.shell_actors[shell_no].satModelDirections
+                visibility = self.shell_actors[shell_no].satModelVisibility
+                
+                # 更新位置
+                points.SetPoint(i, sat_x, sat_y, sat_z)
+                
+                # 计算朝向地球中心的方向
+                length = (sat_x**2 + sat_y**2 + sat_z**2)**0.5
+                if length > 0:
+                    # 计算从卫星指向地球中心的向量
+                    dx = -sat_x/length
+                    dy = -sat_y/length
+                    dz = -sat_z/length
+                    directions.SetTuple3(i, dx, dy, dz)
+                
+                # 更新可见性 - 严格控制：只有在活跃区域内且距离足够近时才显示3D模型
+                if i < visibility.GetNumberOfTuples():
+                    # 直接使用前面计算的use_model值来设置可见性
+                    # use_model已经确保了只有活跃区域内且距离足够近的卫星才会显示3D模型
+                    # 设置为0表示不可见，设置为1表示可见
+                    visibility.SetValue(i, 1 if use_model else 0)
+                    
+                    # 更新可见性状态记录
+                    if i < len(self.shell_actors[shell_no].satModelVisible):
+                        self.shell_actors[shell_no].satModelVisible[i] = use_model
+                        
+                    # 如果这个卫星使用3D模型，记录下来
+                    if use_model:
+                        any_using_model = True
+                    else:
+                        # 确保非活跃或远距离卫星不显示3D模型
+                        visibility.SetValue(i, 0)
+                
+                # 标记数据已修改，触发重新渲染
+                points.Modified()
+                directions.Modified()
+                visibility.Modified()
+                
+                # 更新Glyph - 不使用ThresholdingOn，而是通过可见性数组控制
+                self.shell_actors[shell_no].satModelGlyph.Modified()
+            elif shell_no < len(self.shell_actors) and hasattr(self.shell_actors[shell_no], 'satModelActors') and \
+                 self.shell_actors[shell_no].satModelActors and i < len(self.shell_actors[shell_no].satModelActors):
+                # 使用传统方式更新单个模型
                 model_actor = self.shell_actors[shell_no].satModelActors[i]
                 
                 # 更新模型位置
@@ -769,30 +883,96 @@ class AnimationActors:
                     if abs(axis[0]) + abs(axis[1]) + abs(axis[2]) > 0.001:  # 避免零向量
                         model_actor.RotateWXYZ(angle, axis[0], axis[1], axis[2])
                 
-                # 更新模型可见性
+                # 更新模型可见性 - 直接使用前面计算的use_model值
+                # use_model已经确保了只有活跃区域内且距离足够近的卫星才会显示3D模型
                 if use_model:
                     model_actor.VisibilityOn()
-                    self.shell_actors[shell_no].satModelVisible[i] = True
                 else:
                     model_actor.VisibilityOff()
-                    self.shell_actors[shell_no].satModelVisible[i] = False
+                
+                # 更新可见性状态
+                self.shell_actors[shell_no].satModelVisible[i] = use_model
             
-            # 更新点精灵位置 - 即使使用3D模型也保持点的位置正确，以便点击选择功能正常工作
+            # 更新点精灵位置和可见性
             if i < len(in_bbox) and in_bbox[i]:
-                # 活跃卫星 - 始终保持点的实际位置，但在使用3D模型时降低不透明度
+                # 活跃卫星 - 更新位置
                 active_pts.SetPoint(i, sat_x, sat_y, sat_z)
                 
-                # 如果使用3D模型，将点的不透明度设为0（在UI层面处理）
-                # 但保持点的位置正确，以便点击选择功能正常工作
-                inactive_pts.SetPoint(i, 0, 0, 0)  # 非活跃点设为原点
+                # 非活跃点设为原点
+                inactive_pts.SetPoint(i, 0, 0, 0)
+                
+                # 对于活跃区域的卫星，3D模型可见性已经在前面通过use_model设置
+                # 这里不需要重复设置，确保与前面的逻辑一致
             else:
                 # 非活跃卫星
                 inactive_pts.SetPoint(i, sat_x, sat_y, sat_z)
                 active_pts.SetPoint(i, 0, 0, 0)  # 活跃点设为原点
+                
+                # 确保非活跃区域的卫星不显示3D模型
+                # 由于非活跃区域的卫星不满足is_active条件，use_model已经是False
+                # 但为了确保一致性，这里再次明确设置
+                if using_instanced_rendering and hasattr(self.shell_actors[shell_no], 'satModelVisibility') and \
+                   self.shell_actors[shell_no].satModelVisibility is not None and \
+                   i < self.shell_actors[shell_no].satModelVisibility.GetNumberOfTuples():
+                    # 强制设置为不可见
+                    self.shell_actors[shell_no].satModelVisibility.SetValue(i, 0)
+                    self.shell_actors[shell_no].satModelVisible[i] = False
+                
+                # 确保use_model为False
+                use_model = False
 
         # 标记点已修改
         active_pts.Modified()
         inactive_pts.Modified()
+        
+        # 始终显示点精灵，确保在远距离或非活跃区域时始终显示点精灵
+        # 点精灵和3D模型可以同时显示，但3D模型只在活跃区域内且距离足够近时才显示
+        self.shell_actors[shell_no].satsActor.VisibilityOn()
+        self.shell_inactive_actors[shell_no].satsActor.VisibilityOn()
+        self.shell_actors[shell_no].satsActor.GetProperty().SetOpacity(SAT_OPACITY)
+        
+        # 控制整个3D模型actor的可见性
+        # 只有当至少有一个卫星需要显示3D模型时，才显示3D模型actor
+        if using_instanced_rendering:
+            # 确保可见性数组的修改被应用
+            self.shell_actors[shell_no].satModelVisibility.Modified()
+            
+            # 对于实例化渲染，我们通过可见性数组控制单个实例的显示
+            # 确保Glyph对象可见，但只有设置了可见性的卫星才会显示
+            if len(self.shell_actors[shell_no].satModelActors) > 0:
+                # 只有当至少有一个卫星需要显示3D模型时，才显示模型演员
+                if any_using_model:
+                    self.shell_actors[shell_no].satModelActors[0].VisibilityOn()
+                else:
+                    self.shell_actors[shell_no].satModelActors[0].VisibilityOff()
+            
+            # 更新Glyph - 通过可见性数组控制
+            if hasattr(self.shell_actors[shell_no], 'satModelGlyph') and self.shell_actors[shell_no].satModelGlyph is not None:
+                # 强制更新Glyph以应用可见性变化
+                self.shell_actors[shell_no].satModelGlyph.Update()
+        else:
+            # 对于传统渲染，控制每个单独的模型actor
+            # 使用前面计算的use_model值来控制可见性
+            if hasattr(self.shell_actors[shell_no], 'satModelActors') and self.shell_actors[shell_no].satModelActors:
+                for i, actor in enumerate(self.shell_actors[shell_no].satModelActors):
+                    # 确保i在范围内
+                    if i < len(sat_positions):
+                        # 计算是否应该显示3D模型
+                        is_active = i < len(in_bbox) and in_bbox[i] == True
+                        is_close_enough = ((sat_positions[i]["x"] - camera_pos[0])**2 + 
+                                          (sat_positions[i]["y"] - camera_pos[1])**2 + 
+                                          (sat_positions[i]["z"] - camera_pos[2])**2)**0.5 < SAT_LOD_DISTANCE
+                        show_model = is_active and is_close_enough
+                        
+                        # 设置可见性
+                        if show_model:
+                            actor.VisibilityOn()
+                        else:
+                            actor.VisibilityOff()
+                            
+                        # 更新可见性状态记录
+                        if i < len(self.shell_actors[shell_no].satModelVisible):
+                            self.shell_actors[shell_no].satModelVisible[i] = show_model
 
     def updateLinks(self, shell_no: int, links, sat_positions) -> None:
         """
@@ -896,3 +1076,27 @@ class AnimationActors:
         self.gst_link_actor.gstLinkPolyData.SetPoints(gst_link_pts)
         self.gst_link_actor.gstLinkPolyData.SetLines(gst_link_lines)
         self.gst_link_actor.gstLinkPolyData.Modified()
+
+    def updateSatellitePositions(self, shell_no: int, sat_positions) -> None:
+        """
+        更新卫星位置（简化版，仅更新点云位置，不处理LOD和可见性）
+        
+        :param shell_no: 壳层索引
+        :param sat_positions: 卫星位置数据
+        """
+        # 确保壳层索引有效
+        if shell_no >= len(self.shell_actors):
+            return
+            
+        # 更新点云位置
+        for i in range(len(sat_positions)):
+            self.shell_actors[shell_no].satVtkPts.SetPoint(
+                i,
+                sat_positions[i]["x"],
+                sat_positions[i]["y"],
+                sat_positions[i]["z"],
+            )
+        
+        # 标记点已修改
+        self.shell_actors[shell_no].satVtkPts.Modified()
+            
