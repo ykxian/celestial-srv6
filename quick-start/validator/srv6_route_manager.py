@@ -18,7 +18,8 @@ CONFIG = {
     "interface": "eth0",      # 监听的网络接口
     "route_ttl": 15,          # 路由有效期（秒）
     "update_interval": 5,     # 路由更新间隔（秒）
-    "seg6_mtu": 1500         # 设置SRv6路由的mtu值
+    "seg6_mtu": 1500,        # 设置SRv6路由的mtu值
+    "visual_api": "http://192.168.3.46:8080/api/route"  # 可视化系统API地址
 }
 
 # --------------------------
@@ -54,7 +55,29 @@ class SRv6DynamicRouter:
         # 启动后台线程
         threading.Thread(target=self._event_loop, daemon=True).start()
         threading.Thread(target=self._cleanup_loop, daemon=True).start()
+        
+        # 检查可视化系统连接
+        self._check_visual_system()
+        
         print(f"✅ 路由器初始化完成，监控接口: {CONFIG['interface']}")
+        
+    def _check_visual_system(self):
+        """检查可视化系统连接状态"""
+        if "visual_api" in CONFIG and CONFIG["visual_api"]:
+            try:
+                # 发送测试请求到可视化系统
+                resp = httpx.get(
+                    CONFIG["visual_api"].rsplit('/', 1)[0] + "/status",  # 假设有状态检查接口
+                    timeout=3
+                )
+                if resp.status_code == 200:
+                    print(f"✅ 可视化系统连接成功: {CONFIG['visual_api']}")
+                else:
+                    print(f"⚠️ 可视化系统响应异常: {resp.status_code}")
+            except Exception as e:
+                print(f"⚠️ 可视化系统连接失败: {str(e)}，路由更新将不会发送到可视化系统")
+        else:
+            print("ℹ️ 未配置可视化系统，路由更新将不会发送到可视化系统")
 
     def _load_ebpf_program(self) -> str:
         """去除非必要调试函数后的安全版本"""
@@ -221,8 +244,11 @@ class SRv6DynamicRouter:
 
                 resp = self.http.get(path_url, timeout=5)
                 resp.raise_for_status()
-            
-                final_ip, segments = self._process_path(resp.json())
+                
+                # 获取原始路径数据用于可视化
+                path_data = resp.json()
+                
+                final_ip, segments = self._process_path(path_data)
                 if not final_ip:
                     return
 
@@ -238,10 +264,14 @@ class SRv6DynamicRouter:
                 if final_ip in self.active_routes:
                     if segments != self.active_routes[final_ip]["segments"]:
                         self._install_route(final_ip, segments)
+                        # 发送路由信息到可视化系统
+                        self._send_route_to_visual(dest_ip, final_ip, segments, path_data)
                     else:
                         self.active_routes[final_ip]["last_used"] = time.time()
                 else:
                     self._install_route(final_ip, segments)
+                    # 发送路由信息到可视化系统
+                    self._send_route_to_visual(dest_ip, final_ip, segments, path_data)
                 
             except httpx.HTTPStatusError as e:
                 print(f"❌ API错误: {e.response.status_code}")
@@ -331,6 +361,50 @@ class SRv6DynamicRouter:
         with self.thread_lock:
             self.update_threads[dest_ip] = thread
 
+    def _send_route_to_visual(self, dest_ip: str, final_ip: str, segments: List[str], path_data: dict):
+        """向可视化系统发送路由信息（完整版）
+        发送完整的路径信息，包括中间节点和原始路径数据
+        """
+        # 检查是否配置了可视化系统API
+        if "visual_api" not in CONFIG or not CONFIG["visual_api"]:
+            return
+            
+        try:
+            # 构建完整的数据，包含源节点、目标节点、中间节点和原始路径数据
+            visual_data = {
+                "source": str(self.self_ipv6),
+                "destination": final_ip,
+                "segments": segments,  # 包含中间节点列表
+                "path_data": path_data,  # 包含原始路径数据
+                "timestamp": time.time(),
+                "node_info": {
+                    "shell": self.node_info.shell,
+                    "id": self.node_info.id
+                }
+            }
+            
+            # 发送数据到可视化系统
+            try:
+                resp = httpx.post(
+                    CONFIG["visual_api"], 
+                    json=visual_data,
+                    timeout=3  # 短超时，避免影响主要功能
+                )
+                if resp.status_code == 200:
+                    print(f"✅ 完整路由信息已发送到可视化系统: {dest_ip}")
+                else:
+                    print(f"⚠️ 可视化系统响应异常: {resp.status_code}")
+            except Exception as e:
+                print(f"⚠️ 发送路由信息到可视化系统失败: {str(e)}")
+                
+            # 打印路由信息，便于调试
+            print(f"📊 路由详情: 源={self.self_ipv6}, 目标={final_ip}")
+            print(f"📍 节点信息: shell={self.node_info.shell}, id={self.node_info.id}")
+            print(f"🔄 中间节点数量: {len(segments)}")
+        except Exception as e:
+            print(f"⚠️ 准备路由可视化数据失败: {str(e)}")
+            # 错误不影响主要功能
+            
     def _update_route(self, dest_ip: str):
         """路由更新实现"""
         for _ in range(3):
@@ -344,9 +418,14 @@ class SRv6DynamicRouter:
                     resp = self.http.get(path_url, timeout=5)
                     resp.raise_for_status()
                     
-                    final_ip, new_segments = self._process_path(resp.json())
+                    # 获取原始路径数据
+                    path_data = resp.json()
+                    final_ip, new_segments = self._process_path(path_data)
+                    
                     if new_segments != self.active_routes[dest_ip]["segments"]:
                         self._install_route(final_ip, new_segments)
+                        # 路由变化时发送到可视化系统
+                        self._send_route_to_visual(dest_ip, final_ip, new_segments, path_data)
                     else:
                         print("ℹ️ 路由无变化")
                     
@@ -450,8 +529,22 @@ class SRv6DynamicRouter:
 # 主程序入口
 # --------------------------
 if __name__ == "__main__":
+    # 命令行参数处理
+    if len(sys.argv) > 1 and sys.argv[1] == "--help":
+        print("SRv6动态路由管理器")
+        print("用法: python srv6_route_manager.py [选项]")
+        print("选项:")
+        print("  --no-visual    禁用可视化系统集成")
+        sys.exit(0)
+        
+    # 处理命令行参数
+    if len(sys.argv) > 1 and sys.argv[1] == "--no-visual":
+        print("ℹ️ 已禁用可视化系统集成")
+        CONFIG["visual_api"] = ""
+        
     try:
         router = SRv6DynamicRouter()
+        print(f"ℹ️ 路由器已启动，可视化系统API: {CONFIG.get('visual_api', '未配置')}")
         while True:
             time.sleep(3600)
     except KeyboardInterrupt:

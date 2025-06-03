@@ -693,9 +693,7 @@ class AnimationUI:
                         self.animation.route_target_id
                     )
                     return
-        
-        if actor is None:
-            return
+        return
 
     def updateSatelliteInfoPanel(self, shell: int, sat_id: int) -> None:
         """更新卫星信息面板"""

@@ -91,6 +91,12 @@ ROUTE_PATH_OPACITY = 1.0  # 路径透明度
 ROUTE_PATH_WIDTH = 4  # 路径线宽
 ROUTE_PATH_ARROW_SIZE = 12  # 箭头大小
 
+# SRv6路由路径显示相关常量
+SRV6_ROUTE_PATH_COLOR = (0.0, 0.3, 1.0)  # 蓝色SRv6路径
+SRV6_ROUTE_PATH_OPACITY = 1.0  # SRv6路径透明度
+SRV6_ROUTE_PATH_WIDTH = 5  # SRv6路径线宽
+SRV6_ROUTE_PATH_ARROW_SIZE = 14  # SRv6箭头大小
+
 # 路由更新相关常量
 ROUTE_MIN_UPDATE_INTERVAL = 2.0  # 路由最小更新间隔（秒）
 ROUTE_RESET_DURATION = 3.0  # 路由重置状态持续时间（秒）
