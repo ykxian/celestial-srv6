@@ -99,9 +99,6 @@ class SRv6RouteHandler(BaseHTTPRequestHandler):
         """获取动画连接，直接从SRv6RouteServer获取"""
         # 直接从服务器类变量获取，简化连接对象管理
         if hasattr(SRv6RouteServer, 'animation_conn_instance') and SRv6RouteServer.animation_conn_instance is not None:
-            logger.info("使用SRv6RouteServer.animation_conn_instance发送消息")
-            logger.info(f"SRv6RouteServer.animation_conn_instance类型: {type(SRv6RouteServer.animation_conn_instance)}")
-            logger.info(f"SRv6RouteServer.animation_conn_instance ID: {id(SRv6RouteServer.animation_conn_instance)}")
             # 确保返回的是visualized_celestial.py中创建的parent_conn
             return SRv6RouteServer.animation_conn_instance
         # 没有可用连接则返回None
@@ -177,12 +174,9 @@ class SRv6RouteHandler(BaseHTTPRequestHandler):
                         # 发送到动画进程前记录详细信息
                         logger.info(f"准备发送路由数据到动画进程，详细信息: {json.dumps(route_msg)}")
                         try:
-                            # 输出当前使用的连接对象ID，帮助诊断问题
-                            logger.info(f"使用animation_conn发送消息，ID: {id(animation_conn)}")
                             
                             # 直接使用获取到的连接对象发送消息
                             animation_conn.send(route_msg)
-                            logger.info("成功发送消息到动画进程")
                             
                             logger.info(f"已成功发送路由数据到动画进程: {source_shell}/{source_id} -> {target_shell}/{target_id}")
                             # 发送后等待一小段时间，确保消息被处理
@@ -276,20 +270,6 @@ class SRv6RouteServer:
                 # 再次等待响应处理
                 time.sleep(0.5)  # 等待时间
                 
-                # 测试SRv6路由消息
-                test_route_msg = {
-                    "type": "srv6_route",
-                    "source": {"shell": 1, "id": 1},
-                    "target": {"shell": 2, "id": 2},
-                    "segments": [],
-                    "timestamp": time.time()
-                }
-                logger.info(f"发送测试SRv6路由消息: {json.dumps(test_route_msg)}")
-                animation_conn.send(test_route_msg)
-                logger.info("成功发送测试SRv6路由消息到动画进程")
-                
-                # 最后等待响应处理
-                time.sleep(0.5)  # 等待时间
             except Exception as e:
                 logger.error(f"测试发送消息到动画进程失败: {e}")
                 import traceback

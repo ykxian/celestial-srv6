@@ -157,8 +157,7 @@ class Animation:
         # 先启动控制线程，确保能接收消息
         self.controlThread = threading.Thread(target=self.controlThreadHandler)
         self.controlThread.start()
-        print("Animation: 控制线程已启动，准备接收消息")
-        
+
         # 等待一小段时间确保控制线程已经开始运行
         time.sleep(0.5)
 
@@ -781,8 +780,6 @@ class Animation:
         max_consecutive_errors = 5  # 最大连续错误次数
         error_cooldown = 0  # 错误冷却时间
 
-        print("Animation: controlThreadHandler已启动，准备接收消息")
-
         while True:
             # 如果有错误冷却时间，等待冷却结束
             if error_cooldown > 0:
@@ -805,43 +802,12 @@ class Animation:
                 # 立即输出接收到的消息类型，帮助调试
                 if isinstance(received_data, dict):
                     msg_type = received_data.get("type", "unknown")
-                    print(f"Animation: 接收到消息类型: {msg_type}, 连接对象ID: {id(self.conn)}")
-                    
-                    # 处理测试连接消息
-                    if msg_type == "test_connection" or msg_type == "parent_test":
-                        print(f"Animation: 接收到测试连接消息: {received_data}")
-                        try:
-                            # 发送确认响应
-                            response = {"type": f"{msg_type}_response", "message": "确认收到测试消息", "timestamp": time.time()}
-                            print(f"Animation: 发送测试连接响应: {response}")
-                            self.conn.send(response)
-                            print("Animation: 测试连接响应发送成功")
-                        except Exception as e:
-                            print(f"Animation: 发送测试连接响应失败: {e}")
-                            import traceback
-                            print(traceback.format_exc())
-                        # 不再使用continue，允许继续处理其他消息类型
                     
                     # 处理SRv6路由测试消息
-                    elif msg_type == "srv6_route_test":
+                    if msg_type == "srv6_route_test":
                         # 处理SRv6路由服务器的测试消息
                         print(f"接收到SRv6路由服务器测试消息: {received_data}")
                         print("SRv6路由服务器连接测试成功")
-                        # 发送确认响应，确保双向通信正常
-                        try:
-                            response_msg = {"type": "srv6_route_test_response", "message": "Animation确认收到测试消息", "timestamp": time.time()}
-                            print(f"发送测试响应消息: {response_msg}")
-                            print(f"使用的连接对象ID: {id(self.conn)}")
-                            self.conn.send(response_msg)
-                            print("已成功发送测试响应消息")
-                        except Exception as e:
-                            print(f"发送测试响应消息失败: {e}")
-                            import traceback
-                            print(traceback.format_exc())
-                        # 强制更新渲染窗口，确保测试消息也能触发界面更新
-                        if hasattr(self, 'renderWindow') and self.renderWindow:
-                            self.renderWindow.Render()
-                            print("已强制更新渲染窗口 - 测试消息")
                 
                 # 消息处理逻辑应该在try块内
                 if not isinstance(received_data, dict):
@@ -849,7 +815,6 @@ class Animation:
                     continue
 
                 command = received_data.get("type", "unknown")
-                print(f"Animation: 处理消息类型: {command}")
 
                 # SRv6路由测试消息已在上面的if语句块中处理
                                         

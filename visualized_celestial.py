@@ -102,30 +102,9 @@ def parse_args():
 def start_animation(conn, draw_links, frequency):
     """启动动画进程"""
     # 只创建并启动动画，AnimationConstellation 已在主进程中创建
-    print(f"start_animation: 开始初始化Animation对象，conn类型: {type(conn)}")
-    print(f"start_animation: conn对象ID: {id(conn)}")
-    print(f"start_animation: conn对象详情: {conn}")
-    
-    # 确保连接对象有效
-    if conn is None or not hasattr(conn, 'recv') or not hasattr(conn, 'send'):
-        print(f"错误: 无效的连接对象: {conn}")
-        return
-        
-    # 测试连接对象
-    try:
-        import time
-        test_msg = {"type": "test_connection", "message": "测试连接对象", "timestamp": time.time()}
-        print(f"start_animation: 发送测试消息: {test_msg}")
-        conn.send(test_msg)
-        print("start_animation: 测试消息发送成功")
-    except Exception as e:
-        print(f"start_animation: 测试消息发送失败: {e}")
-        import traceback
-        print(traceback.format_exc())
     
     # 创建Animation对象，确保使用相同的连接对象
     animation = celestial.animation.Animation(conn, draw_links, frequency)
-    print("start_animation: Animation对象初始化完成")
     return animation
 
 def main():
@@ -166,10 +145,7 @@ def main():
     ]
     
     # 创建多进程通信管道
-    print("visualized_celestial: 创建多进程通信管道")
     parent_conn, child_conn = multiprocessing.Pipe()
-    print(f"visualized_celestial: parent_conn ID: {id(parent_conn)}, 类型: {type(parent_conn)}")
-    print(f"visualized_celestial: child_conn ID: {id(child_conn)}, 类型: {type(child_conn)}")
     
     # 创建动画星座对象（用于更新动画）
     print("visualized_celestial: 创建动画星座对象")
@@ -177,76 +153,23 @@ def main():
         config, 
         parent_conn,
     )
-    print(f"visualized_celestial: 动画星座对象创建完成，使用的连接对象ID: {id(parent_conn)}")
-    print(f"visualized_celestial: 确保此连接对象ID与SRv6RouteServer中的一致")
     
-    # 测试父连接
-    try:
-        import time
-        test_msg = {"type": "parent_test", "message": "测试父连接对象", "timestamp": time.time()}
-        print(f"visualized_celestial: 通过父连接发送测试消息: {test_msg}")
-        parent_conn.send(test_msg)
-        print("visualized_celestial: 父连接测试消息发送成功")
-    except Exception as e:
-        print(f"visualized_celestial: 父连接测试消息发送失败: {e}")
-        import traceback
-        print(traceback.format_exc())
     
     # 初始化SRv6路由服务器
     from celestial.srv6_route_server import SRv6RouteServer
     from celestial.srv6_route_server import SRv6RouteHandler
-    print(f"visualized_celestial: 初始化SRv6路由服务器，使用parent_conn，类型: {type(parent_conn)}")
-    print(f"visualized_celestial: parent_conn对象ID: {id(parent_conn)}")
     
     # 使用parent_conn初始化SRv6路由服务器
     srv6_route_server = SRv6RouteServer(port=8080, animation_conn=parent_conn)
     srv6_route_server.start()
-    print("visualized_celestial: SRv6路由服务器已启动")
-    print(f"visualized_celestial: SRv6路由服务器连接对象ID: {id(SRv6RouteServer.animation_conn_instance)}")
     
     # 确认连接对象是否一致
     if id(SRv6RouteServer.animation_conn_instance) == id(parent_conn):
         print("visualized_celestial: 连接对象ID一致，消息传递应该正常工作")
     else:
         print("visualized_celestial: 警告 - 连接对象ID不一致，可能导致消息传递问题")
-        
-    # 发送测试SRv6路由消息
-    try:
-        # 第一次测试消息
-        test_msg = {"type": "srv6_route_test", "message": "visualized_celestial测试SRv6路由服务器连接", "timestamp": time.time()}
-        print(f"visualized_celestial: 发送第一次测试消息: {test_msg}")
-        parent_conn.send(test_msg)
-        print("visualized_celestial: 成功发送第一次测试消息")
-        
-        # 等待响应处理
-        time.sleep(0.5)  # 等待时间
-        
-        # 第二次测试消息
-        test_msg2 = {"type": "srv6_route_test", "message": "visualized_celestial测试SRv6路由服务器连接 - 确认", "timestamp": time.time()}
-        print(f"visualized_celestial: 发送第二次测试消息: {test_msg2}")
-        parent_conn.send(test_msg2)
-        print("visualized_celestial: 成功发送第二次测试消息")
-        
-        # 测试SRv6路由消息
-        test_route_msg = {
-            "type": "srv6_route",
-            "source": {"shell": 1, "id": 1},
-            "target": {"shell": 2, "id": 2},
-            "segments": [],
-            "timestamp": time.time()
-        }
-        print(f"visualized_celestial: 发送测试SRv6路由消息: {json.dumps(test_route_msg)}")
-        parent_conn.send(test_route_msg)
-        print("visualized_celestial: 成功发送测试SRv6路由消息")
-    except Exception as e:
-        print(f"visualized_celestial: 发送测试消息失败: {e}")
-        import traceback
-        print(traceback.format_exc())
     
     # 创建并启动动画进程
-    # 确保child_conn是有效的连接对象
-    print(f"visualized_celestial: 创建动画进程，child_conn类型: {type(child_conn)}")
-    print(f"visualized_celestial: child_conn ID: {id(child_conn)}")
     animation_process = multiprocessing.Process(
         target=start_animation,
         args=(child_conn, not args.no_links, args.frequency)
@@ -262,11 +185,6 @@ def main():
             "duration": config.duration,
             "offset": config.offset,
         }
-    )
-
-    # 测试srv6
-    parent_conn.send(
-        {"type": "srv6_route_test", "message": "vcelestial测试SRv6路由服务器连接", "timestamp": time.time()}
     )
     
     # 注册主机
