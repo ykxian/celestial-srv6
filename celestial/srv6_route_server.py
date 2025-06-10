@@ -235,8 +235,6 @@ class SRv6RouteServer:
         self.server_thread = None
         self.running = False
         
-        # 记录动画连接信息
-        logger.info(f"SRv6RouteServer初始化，动画连接对象类型: {type(animation_conn)}")
         if animation_conn is None:
             logger.warning("警告: 动画连接为None，路由数据将不会发送到动画系统")
         
@@ -245,9 +243,7 @@ class SRv6RouteServer:
             # 直接使用传入的animation_conn作为类变量
             # 这是visualied_celestial.py中创建的parent_conn
             SRv6RouteServer.animation_conn_instance = animation_conn
-            
-            logger.info(f"直接使用传入的animation_conn作为animation_conn_instance: {id(SRv6RouteServer.animation_conn_instance)}")
-            
+                        
             # 测试连接
             try:
                 logger.info("开始测试连接...")

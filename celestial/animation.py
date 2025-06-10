@@ -838,24 +838,144 @@ class Animation:
                         print(f"源节点信息: shell={source_shell}, id={source_id}")
                         print(f"目标节点信息: shell={target_shell}, id={target_id}")
                         
-                        # 计算全局索引
-                        source_index = self._calculate_node_global_index(source_shell, source_id)
-                        target_index = self._calculate_node_global_index(target_shell, target_id)
+                        # 检查shell_sats是否已初始化
+                        if not hasattr(self, 'shell_sats') or not self.shell_sats:
+                            print("错误: shell_sats未初始化或为空，无法计算节点索引")
+                            return
+                            
+                        # 检查sat_positions是否已初始化
+                        if not hasattr(self, 'sat_positions') or not self.sat_positions:
+                            print("错误: sat_positions未初始化或为空，无法显示路径")
+                            return
+                            
+                        # 检查gst_positions是否已初始化
+                        if not hasattr(self, 'gst_positions'):
+                            print("警告: gst_positions未初始化，可能无法正确显示地面站路径")
+                        
+                        # 计算源节点全局索引 - 使用与showRoutePath相同的逻辑
+                        source_index = -1
+                        if source_shell == 0 and hasattr(self, 'gst_positions') and source_id < len(self.gst_positions):  # 地面站
+                            source_index = sum(self.shell_sats) + source_id
+                            print(f"源节点是地面站: id={source_id}, 全局索引={source_index}")
+                        else:  # 卫星
+                            # 注意：SRv6路由数据中shell可能从1开始，需要调整
+                            shell_to_use = source_shell
+                            if len(self.shell_sats) == 1 and source_shell == 1:  # 只有一个shell且shell=1的情况
+                                shell_to_use = 0
+                                print(f"调整源节点shell: 从{source_shell}到{shell_to_use}")
+                            
+                            offset = 0
+                            for s in range(shell_to_use):
+                                if s < len(self.shell_sats):
+                                    offset += self.shell_sats[s]
+                            source_index = offset + source_id
+                            print(f"源节点是卫星: shell={shell_to_use}, id={source_id}, 偏移量={offset}, 全局索引={source_index}")
+                        
+                        # 计算目标节点全局索引 - 使用与showRoutePath相同的逻辑
+                        target_index = -1
+                        if target_shell == 0 and hasattr(self, 'gst_positions') and target_id < len(self.gst_positions):  # 地面站
+                            target_index = sum(self.shell_sats) + target_id
+                            print(f"目标节点是地面站: id={target_id}, 全局索引={target_index}")
+                        else:  # 卫星
+                            # 注意：SRv6路由数据中shell可能从1开始，需要调整
+                            shell_to_use = target_shell
+                            if len(self.shell_sats) == 1 and target_shell == 1:  # 只有一个shell且shell=1的情况
+                                shell_to_use = 0
+                                print(f"调整目标节点shell: 从{target_shell}到{shell_to_use}")
+                            
+                            offset = 0
+                            for s in range(shell_to_use):
+                                if s < len(self.shell_sats):
+                                    offset += self.shell_sats[s]
+                            target_index = offset + target_id
+                            print(f"目标节点是卫星: shell={shell_to_use}, id={target_id}, 偏移量={offset}, 全局索引={target_index}")
                         
                         print(f"源节点全局索引: {source_index}")
                         print(f"目标节点全局索引: {target_index}")
+                        
+                        # 检查源节点和目标节点索引是否有效
+                        if source_index < 0:
+                            print(f"错误: 源节点索引 {source_index} 无效")
+                            return
+                            
+                        if target_index < 0:
+                            print(f"错误: 目标节点索引 {target_index} 无效")
+                            return
                         
                         # 构建路径节点列表
                         path_nodes = [source_index]
                         
                         # 添加中间节点
                         for i, segment in enumerate(segments):
-                            seg_shell = segment.get("shell", 0)
-                            seg_id = segment.get("id", 0)
-                            print(f"中间节点{i+1}信息: shell={seg_shell}, id={seg_id}")
-                            seg_index = self._calculate_node_global_index(seg_shell, seg_id)
-                            print(f"中间节点{i+1}全局索引: {seg_index}")
-                            path_nodes.append(seg_index)
+                            try:
+                                seg_shell = segment.get("shell", 0)
+                                seg_id = segment.get("id", 0)
+                                
+                                # 检查shell和id是否为负值
+                                if seg_shell < 0 or seg_id < 0:
+                                    print(f"警告: 中间节点{i+1}的shell={seg_shell}或id={seg_id}为负值，跳过此节点")
+                                    continue
+                                    
+                                print(f"中间节点{i+1}信息: shell={seg_shell}, id={seg_id}")
+                                
+                                # 计算中间节点全局索引 - 使用与showRoutePath相同的逻辑
+                                seg_index = -1
+                                try:
+                                    # 检查shell和id是否为负值
+                                    if seg_shell < 0 or seg_id < 0:
+                                        print(f"错误: 中间节点{i+1}的shell={seg_shell}或id={seg_id}为负值，跳过此节点")
+                                        continue
+                                        
+                                    # 注意：SRv6路由数据中shell可能从1开始，需要调整，与源节点和目标节点处理逻辑保持一致
+                                    if len(self.shell_sats) == 1 and seg_shell == 1:  # 只有一个shell且shell=1的情况
+                                        seg_shell = 0
+                                        print(f"调整中间节点{i+1}shell: 从1到0")
+                                    # 检查shell是否超出范围
+                                    elif seg_shell >= len(self.shell_sats):
+                                        print(f"错误: 中间节点{i+1}的shell={seg_shell}超出范围，shell数量={len(self.shell_sats)}")
+                                        continue
+                                    
+                                    if seg_shell == 0 and hasattr(self, 'gst_positions') and seg_id < len(self.gst_positions):  # 地面站
+                                        seg_index = sum(self.shell_sats) + seg_id
+                                        print(f"中间节点{i+1}是地面站: id={seg_id}, 全局索引={seg_index}")
+                                    else:  # 卫星
+                                        # 使用可能已经调整过的shell值
+                                        shell_to_use = seg_shell
+                                        print(f"中间节点{i+1}: shell={shell_to_use}, id={seg_id}")
+                                        
+                                        offset = 0
+                                        for s in range(shell_to_use):
+                                            if s < len(self.shell_sats):
+                                                offset += self.shell_sats[s]
+                                        
+                                        # 检查id是否超出卫星数量
+                                        if shell_to_use < len(self.shell_sats) and seg_id >= self.shell_sats[shell_to_use]:
+                                            print(f"错误: 中间节点{i+1}的id={seg_id}超出shell {shell_to_use}的卫星数量{self.shell_sats[shell_to_use]}")
+                                            # 尝试使用有效范围内的ID
+                                            if self.shell_sats[shell_to_use] > 0:
+                                                seg_id = seg_id % self.shell_sats[shell_to_use]
+                                                print(f"  尝试调整为有效ID: {seg_id}")
+                                            else:
+                                                continue
+                                            
+                                        seg_index = offset + seg_id
+                                        print(f"中间节点{i+1}是卫星: shell={shell_to_use}, id={seg_id}, 偏移量={offset}, 全局索引={seg_index}")
+                                except Exception as e:
+                                    print(f"处理中间节点{i+1}时出现异常: {e}")
+                                    import traceback
+                                    traceback.print_exc()
+                                    continue
+                                
+                                if seg_index >= 0:  # 只添加有效的节点索引
+                                    print(f"中间节点{i+1}全局索引: {seg_index}")
+                                    path_nodes.append(seg_index)
+                                else:
+                                    print(f"警告: 中间节点{i+1}索引 {seg_index} 无效，跳过此节点")
+                            except Exception as e:
+                                print(f"处理中间节点{i+1}时出错: {e}")
+                                import traceback
+                                traceback.print_exc()
+                                continue
                         
                         # 确保路径以目标节点结束
                         if path_nodes[-1] != target_index:
@@ -923,27 +1043,83 @@ class Animation:
                         
                         
                         # 清除之前的SRv6路由路径
-                        if hasattr(self, 'srv6_route_path_actor') and self.srv6_route_path_actor:
-                            self.renderer.RemoveActor(self.srv6_route_path_actor)
-                            self.srv6_route_path_actor = None
+                        try:
+                            if hasattr(self, 'srv6_route_path_actor') and self.srv6_route_path_actor:
+                                try:
+                                    self.renderer.RemoveActor(self.srv6_route_path_actor)
+                                    self.srv6_route_path_actor = None
+                                    print("已清除之前的SRv6路由路径")
+                                except Exception as e:
+                                    print(f"清除之前的SRv6路由路径时出错: {e}")
+                                    import traceback
+                                    traceback.print_exc()
+                        except Exception as e:
+                            print(f"处理SRv6路由路径清除时出错: {e}")
                             
                         # 清除之前的SRv6路由箭头
-                        if hasattr(self, 'srv6_route_arrows_actors'):
-                            for arrow_actor in self.srv6_route_arrows_actors:
-                                if arrow_actor:
-                                    self.renderer.RemoveActor(arrow_actor)
-                            self.srv6_route_arrows_actors = []
+                        try:
+                            if hasattr(self, 'srv6_route_arrows_actors'):
+                                try:
+                                    for arrow_actor in self.srv6_route_arrows_actors:
+                                        if arrow_actor:
+                                            self.renderer.RemoveActor(arrow_actor)
+                                    self.srv6_route_arrows_actors = []
+                                    print("已清除之前的SRv6路由箭头")
+                                except Exception as e:
+                                    print(f"清除之前的SRv6路由箭头时出错: {e}")
+                                    import traceback
+                                    traceback.print_exc()
+                        except Exception as e:
+                            print(f"处理SRv6路由箭头清除时出错: {e}")
+                        
+                        # 检查路径节点是否有效
+                        display_path = True
+                        if len(path_nodes) < 2:
+                            print(f"SRv6路径节点数量不足: {len(path_nodes)}")
+                            display_path = False
+                        
+                        if not valid_path:
+                            print("SRv6路径包含无效节点，取消显示")
+                            display_path = False
+                            
+                        # 检查路径中是否有无效的节点索引
+                        total_nodes = sum(self.shell_sats) + (len(self.gst_positions) if hasattr(self, 'gst_positions') else 0)
+                        for node_idx in path_nodes:
+                            if node_idx < 0 or node_idx >= total_nodes:
+                                print(f"SRv6路径包含无效的节点索引: {node_idx}, 总节点数: {total_nodes}")
+                                display_path = False
+                                break
                         
                         # 显示SRv6路由路径（使用蓝色）
-                        if len(path_nodes) >= 2 and valid_path:
-                            self.displaySRv6RoutePath(path_nodes)
-                            print(f"已显示SRv6路由路径，共{len(path_nodes)}个节点")
-                            # 强制更新渲染窗口
-                            if hasattr(self, 'renderWindow') and self.renderWindow:
-                                self.renderWindow.Render()
-                                print("已强制更新渲染窗口")
+                        if display_path:
+                            print(f"准备显示SRv6路由路径，共{len(path_nodes)}个节点")
+                            try:
+                                self.displaySRv6RoutePath(path_nodes)
+                                print(f"已显示SRv6路由路径，共{len(path_nodes)}个节点")
+                                # 强制更新渲染窗口
+                                try:
+                                    if hasattr(self, 'renderWindow') and self.renderWindow:
+                                        try:
+                                            self.renderWindow.Render()
+                                            print("已强制更新渲染窗口")
+                                        except Exception as e:
+                                            print(f"强制更新渲染窗口时出错: {e}")
+                                            import traceback
+                                            traceback.print_exc()
+                                            # 尝试使用替代方法更新渲染
+                                            try:
+                                                self.renderWindow.Modified()
+                                                print("使用Modified()方法更新渲染窗口")
+                                            except Exception as e2:
+                                                print(f"尝试替代渲染方法时出错: {e2}")
+                                except Exception as e:
+                                    print(f"处理渲染窗口更新时出错: {e}")
+                            except Exception as e:
+                                print(f"调用displaySRv6RoutePath时出错: {e}")
+                                import traceback
+                                traceback.print_exc()
                         else:
-                            print(f"SRv6路径无法显示: 节点数={len(path_nodes)}, 路径有效={valid_path}")
+                            print(f"SRv6路径无法显示: 节点数={len(path_nodes)}, 路径有效={valid_path}, 显示决定={display_path}")
                     except Exception as e:
                         import traceback
                         print(f"处理SRv6路由数据时出错: {e}")
@@ -1128,240 +1304,347 @@ class Animation:
 
         print("路由路径已清除，系统已进入重置状态")
         
-    def _calculate_node_global_index(self, shell: int, node_id: int) -> int:
-        """计算节点的全局索引
-        
-        :param shell: 节点所在的壳层（0表示地面站）
-        :param node_id: 节点在壳层中的ID
-        :return: 节点的全局索引
-        """
-        print(f"计算节点全局索引: shell={shell}, id={node_id}, shell_sats={self.shell_sats}")
-        
-        if shell == 0 and hasattr(self, 'gst_positions') and node_id < len(self.gst_positions):  # 地面站
-            # 地面站的全局索引 = 所有卫星数量 + 地面站ID
-            result = sum(self.shell_sats) + node_id
-            print(f"地面站全局索引计算: sum(shell_sats)={sum(self.shell_sats)} + node_id={node_id} = {result}")
-            return result
-        else:  # 卫星
-            # 检查shell值是否有效 - 注意：shell值从0开始，而不是从1开始
-            if shell < 0 or shell >= len(self.shell_sats):
-                print(f"警告: shell值超出范围: {shell}, 有效范围: 0-{len(self.shell_sats)-1}")
-                # 返回一个默认值，避免方法没有返回值
-                return 0
-                
-            # 计算之前所有壳层的卫星总数
-            total = 0
-            for s in range(shell):
-                total += self.shell_sats[s]
-                
-            # 检查节点ID是否有效
-            if node_id < 0 or (shell < len(self.shell_sats) and node_id >= self.shell_sats[shell]):
-                print(f"警告: 节点ID超出范围: {node_id}, 壳层{shell}的有效范围: 0-{self.shell_sats[shell]-1}")
-                # 返回一个默认值，避免方法没有返回值
-                return total
-                
-            # 加上当前壳层中的卫星ID
-            result = total + node_id
-            print(f"卫星全局索引计算: 之前壳层总数={total} + 节点ID={node_id} = {result}")
-            return result
+    # _calculate_node_global_index 函数已被移除，索引计算逻辑已直接集成到processSRv6RouteMessage方法中
             
     def displaySRv6RoutePath(self, path_nodes: list) -> None:
         """显示SRv6路由路径（使用蓝色）
         
-        :param path_nodes: 路径节点列表
+        :param path_nodes: 路径节点列表，包含从源到目标的所有节点全局索引
         """
-        print(f"开始显示SRv6路由路径，节点列表: {path_nodes}")
-        # 确保路径节点列表有效
-        if not isinstance(path_nodes, list):
-            print(f"错误: 路径节点不是列表类型: {type(path_nodes)}")
-            return
-        if not path_nodes or len(path_nodes) < 2:
-            print("SRv6路径节点不足，无法显示路径")
-            return
-            
-        print(f"开始构建SRv6路由路径，节点列表: {path_nodes}")
-        print(f"当前卫星配置: shells={self.num_shells}, 每个shell的卫星数量={self.shell_sats}")
-        print(f"卫星总数: {sum(self.shell_sats)}, 地面站总数: {len(self.gst_positions) if hasattr(self, 'gst_positions') else 0}")
-        
-        # 创建静态路径显示（不随用户交互变化）
-        # 创建点集合
-        points = vtk.vtkPoints()
-        
-        # 创建线段集合
-        lines = vtk.vtkCellArray()
-        
-        # 添加所有节点的位置
-        valid_points = 0
-        for i, node_index in enumerate(path_nodes):
-            print(f"处理路径节点{i+1}: 全局索引={node_index}")
-            # 确定节点类型和位置
-            if node_index < sum(self.shell_sats):  # 卫星
-                # 计算卫星所在的壳层和ID
-                shell_no = 0
-                sat_id = node_index
-                accumulated = 0
+        try:
+            if not path_nodes or len(path_nodes) < 2:
+                print("SRv6路径节点不足，无法显示路径")
+                return
                 
-                for s in range(self.num_shells):
-                    if sat_id < accumulated + self.shell_sats[s]:
-                        shell_no = s
-                        sat_id -= accumulated
-                        break
-                    accumulated += self.shell_sats[s]
+            # 保存当前路径节点，用于后续更新
+            self.current_srv6_path_nodes = path_nodes
+            
+            # 限制路径节点数量，防止过长路径导致性能问题
+            max_path_nodes = 20  # 最大路径节点数
+            if len(path_nodes) > max_path_nodes:
+                step = len(path_nodes) // (max_path_nodes - 2)
+                selected_nodes = [path_nodes[0]]  # 起点
+                selected_nodes.extend(path_nodes[step::step][:max_path_nodes-2])  # 中间节点
+                if path_nodes[-1] not in selected_nodes:
+                    selected_nodes.append(path_nodes[-1])  # 终点
+                path_nodes = selected_nodes
+            
+            # 清除现有SRv6路由路径
+            if hasattr(self, 'srv6_route_path_actor') and self.srv6_route_path_actor:
+                self.renderer.RemoveActor(self.srv6_route_path_actor)
+                self.srv6_route_path_actor = None
                 
-                print(f"  节点{i+1}是卫星: shell={shell_no}, id={sat_id}")
+            # 清除现有箭头
+            if hasattr(self, 'srv6_route_arrows_actors'):
+                for arrow_actor in self.srv6_route_arrows_actors:
+                    if arrow_actor:
+                        self.renderer.RemoveActor(arrow_actor)
+            self.srv6_route_arrows_actors = []
+
+            # 创建路径点集合
+            path_points = vtk.vtkPoints()
+            path_lines = vtk.vtkCellArray()
+            
+            # 获取所有节点的位置
+            total_sats = sum(self.shell_sats)
+            node_positions = []
+            
+            for i, node_idx in enumerate(path_nodes):
+                try:
+                    node_idx = int(node_idx)  # 确保节点索引是整数
+                    if node_idx < 0:
+                        print(f"警告: 节点索引 {node_idx} 小于0，跳过此节点")
+                        continue
+                        
+                    if node_idx < total_sats:  # 卫星
+                        try:
+                            # 检查shell_sats是否已初始化
+                            if not self.shell_sats or len(self.shell_sats) == 0:
+                                print(f"警告: shell_sats未初始化或为空，无法确定卫星shell和id")
+                                continue
+                                
+                            # 确定卫星所在的shell和在shell中的索引
+                            shell_idx = -1
+                            sat_idx = -1
+                            remaining = node_idx
+                            
+                            # 检查shell_sats是否已正确初始化
+                            if not self.shell_sats or len(self.shell_sats) == 0:
+                                print(f"错误: shell_sats未初始化或为空，无法确定卫星shell和id")
+                                continue
+                                
+                            # 使用更安全的循环逻辑来确定shell_idx和sat_idx
+                            try:
+                                for s in range(len(self.shell_sats)):
+                                    if remaining < self.shell_sats[s]:
+                                        shell_idx = s
+                                        sat_idx = remaining
+                                        break
+                                    remaining -= self.shell_sats[s]
+                                    
+                                # 检查计算结果是否有效
+                                if shell_idx < 0 or sat_idx < 0:
+                                    print(f"错误: 无法确定节点索引{node_idx}的shell和id，计算结果为shell_idx={shell_idx}, sat_idx={sat_idx}")
+                                    continue
+                                    
+                                # 检查计算出的shell_idx是否超出范围
+                                if shell_idx >= len(self.sat_positions):
+                                    print(f"错误: 计算出的shell_idx={shell_idx}超出sat_positions范围{len(self.sat_positions)}")
+                                    continue
+                                    
+                                # 检查计算出的sat_idx是否超出范围
+                                if sat_idx >= len(self.sat_positions[shell_idx]):
+                                    print(f"错误: 计算出的sat_idx={sat_idx}超出sat_positions[{shell_idx}]范围{len(self.sat_positions[shell_idx])}")
+                                    continue
+                            except Exception as e:
+                                print(f"计算卫星shell和id时出错: {e}")
+                                import traceback
+                                traceback.print_exc()
+                                continue
+                            
+                            # 检查计算出的索引是否有效
+                            if shell_idx < 0 or sat_idx < 0:
+                                print(f"警告: 无法确定节点{i+1}(索引={node_idx})的shell和id，跳过此节点")
+                                continue
+                                
+                            print(f"节点{i+1}(卫星): 全局索引={node_idx}, 计算得到shell={shell_idx}, id={sat_idx}")
+                                
+                            # 获取卫星位置
+                            try:
+                                # 检查shell_idx是否有效
+                                if shell_idx >= len(self.sat_positions):
+                                    print(f"错误: shell索引{shell_idx}超出范围，shell总数={len(self.sat_positions)}")
+                                    continue
+                                    
+                                # 检查sat_idx是否有效
+                                if sat_idx >= len(self.sat_positions[shell_idx]):
+                                    print(f"错误: 卫星ID {sat_idx} 超出shell {shell_idx}的卫星数量{len(self.sat_positions[shell_idx])}")
+                                    # 尝试使用有效范围内的ID
+                                    if len(self.sat_positions[shell_idx]) > 0:
+                                        sat_idx = sat_idx % len(self.sat_positions[shell_idx])
+                                        print(f"  尝试调整为有效ID: {sat_idx}")
+                                    else:
+                                        continue
+                                        
+                                # 获取卫星位置
+                                # 参照 displayRoutePath 函数的逻辑处理卫星位置数据
+                                try:
+                                    # 检查shell_idx和sat_idx是否在有效范围内
+                                    if shell_idx < len(self.sat_positions) and sat_idx < len(self.sat_positions[shell_idx]):
+                                        pos = self.sat_positions[shell_idx][sat_idx]
+                                        if isinstance(pos, dict) and 'x' in pos and 'y' in pos and 'z' in pos:
+                                            node_positions.append((pos['x'], pos['y'], pos['z']))
+                                            print(f"节点{i+1}(卫星): shell={shell_idx}, id={sat_idx}, 位置=({pos['x']:.2f}, {pos['y']:.2f}, {pos['z']:.2f})")
+                                        elif isinstance(pos, (list, tuple)):
+                                            # 处理格式为(id, x, y, z, active)的位置数据
+                                            try:
+                                                # 根据元组长度确定正确的索引位置
+                                                if len(pos) >= 5:  # 格式为(id, x, y, z, active)
+                                                    node_positions.append((float(pos[1]), float(pos[2]), float(pos[3])))
+                                                    print(f"节点{i+1}(卫星): shell={shell_idx}, id={sat_idx}, 位置=({float(pos[1]):.2f}, {float(pos[2]):.2f}, {float(pos[3]):.2f})")
+                                                elif len(pos) >= 4:  # 可能是其他格式
+                                                    node_positions.append((float(pos[1]), float(pos[2]), float(pos[3])))
+                                                    print(f"节点{i+1}(卫星): shell={shell_idx}, id={sat_idx}, 位置=({float(pos[1]):.2f}, {float(pos[2]):.2f}, {float(pos[3]):.2f})")
+                                                elif len(pos) == 3:  # 可能是直接的(x,y,z)格式
+                                                    node_positions.append((float(pos[0]), float(pos[1]), float(pos[2])))
+                                                    print(f"节点{i+1}(卫星): shell={shell_idx}, id={sat_idx}, 位置=({float(pos[0]):.2f}, {float(pos[1]):.2f}, {float(pos[2]):.2f})")
+                                                else:
+                                                    print(f"错误: 元组格式位置数据元素不足: pos={pos}")
+                                                    continue
+                                            except (IndexError, TypeError, ValueError) as e:
+                                                print(f"错误: 处理元组格式位置数据失败: {e}, pos={pos}")
+                                                continue
+                                        else:
+                                            # 尝试直接将pos转换为坐标
+                                            try:
+                                                # 尝试将pos作为numpy数组或其他可转换为坐标的对象处理
+                                                x = float(pos[0]) if hasattr(pos, '__getitem__') and len(pos) > 0 else 0
+                                                y = float(pos[1]) if hasattr(pos, '__getitem__') and len(pos) > 1 else 0
+                                                z = float(pos[2]) if hasattr(pos, '__getitem__') and len(pos) > 2 else 0
+                                                node_positions.append((x, y, z))
+                                                print(f"节点{i+1}(卫星): shell={shell_idx}, id={sat_idx}, 位置=({x:.2f}, {y:.2f}, {z:.2f}) (直接转换)")
+                                            except (IndexError, TypeError, ValueError, AttributeError) as e:
+                                                print(f"错误: 卫星位置数据不完整或格式错误: shell={shell_idx}, id={sat_idx}, pos={pos}, 错误={e}")
+                                                continue
+                                    else:
+                                        print(f"错误: 无法获取卫星位置数据: shell={shell_idx}, id={sat_idx}")
+                                        continue
+                                except Exception as e:
+                                    print(f"获取卫星位置时出错: {e}")
+                                    import traceback
+                                    traceback.print_exc()
+                                    continue
+                            except Exception as e:
+                                print(f"获取卫星位置时出错: {e}")
+                                import traceback
+                                traceback.print_exc()
+                                continue
+                        except Exception as e:
+                            print(f"处理卫星节点{i+1}(索引={node_idx})时出错: {e}")
+                            import traceback
+                            traceback.print_exc()
+                            continue
+                    else:  # 地面站
+                        gst_idx = node_idx - total_sats
+                        if hasattr(self, 'gst_positions') and gst_idx < len(self.gst_positions):
+                            # 优先从地面站演员获取最新位置
+                            if self.actors.gst_actor and self.actors.gst_actor.satVtkPts:
+                                gst_world_pos = [0, 0, 0]  # 初始化坐标
+                                if gst_idx < self.actors.gst_actor.satVtkPts.GetNumberOfPoints():
+                                    self.actors.gst_actor.satVtkPts.GetPoint(gst_idx, gst_world_pos)
+                                    node_positions.append((gst_world_pos[0], gst_world_pos[1], gst_world_pos[2]))
+                                    print(f"节点{i+1}(地面站): id={gst_idx}, 位置=({gst_world_pos[0]:.2f}, {gst_world_pos[1]:.2f}, {gst_world_pos[2]:.2f})")
+                                else:
+                                    print(f"警告: 地面站索引 {gst_idx} 超出了地面站点数量 {self.actors.gst_actor.satVtkPts.GetNumberOfPoints()}")
+                                    # 尝试使用存储的位置
+                                    pos = self.gst_positions[gst_idx]
+                                    node_positions.append((pos['x'], pos['y'], pos['z']))
+                                    print(f"  使用存储的位置: ({pos['x']:.2f}, {pos['y']:.2f}, {pos['z']:.2f})")
+                            else:
+                                # 如果无法从演员获取，则使用存储的位置（可能不是最新的）
+                                pos = self.gst_positions[gst_idx]
+                                node_positions.append((pos['x'], pos['y'], pos['z']))
+                                print(f"节点{i+1}(地面站): id={gst_idx}, 位置=({pos['x']:.2f}, {pos['y']:.2f}, {pos['z']:.2f}) (从存储位置获取)")
+                        else:
+                            print(f"警告: 无效的地面站索引: {gst_idx}, 地面站总数={len(self.gst_positions) if hasattr(self, 'gst_positions') else 0}")
+                            continue
+                except Exception as e:
+                    print(f"处理SRv6路径节点 {node_idx} 时出错: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    continue
+            
+            # 如果没有有效的节点位置，则返回
+            if len(node_positions) < 2:
+                print("没有足够的有效节点位置来显示SRv6路径")
+                return
+            
+            print(f"成功获取到 {len(node_positions)}/{len(path_nodes)} 个节点的位置")
+            
+            # 添加路径点和线段
+            for i, pos in enumerate(node_positions):
+                path_points.InsertNextPoint(pos[0], pos[1], pos[2])
                 
-                # 检查sat_positions是否已初始化
-                if not hasattr(self, 'sat_positions') or len(self.sat_positions) == 0:
-                    print(f"  错误: sat_positions未初始化或为空")
-                    return
-                
-                # 获取卫星位置
-                if shell_no < len(self.sat_positions) and sat_id < len(self.sat_positions[shell_no]):
-                    pos = self.sat_positions[shell_no][sat_id]
-                    print(f"  卫星位置: x={pos['x']}, y={pos['y']}, z={pos['z']}")
-                    points.InsertNextPoint(pos["x"], pos["y"], pos["z"])
-                    valid_points += 1
-                else:
-                    print(f"  错误: 无法获取卫星位置: shell={shell_no}, id={sat_id}")
-                    print(f"  sat_positions长度: {len(self.sat_positions)}")
-                    if shell_no < len(self.sat_positions):
-                        print(f"  shell {shell_no}的卫星数量: {len(self.sat_positions[shell_no])}")
-                    return
-            else:  # 地面站
-                gst_id = node_index - sum(self.shell_sats)
-                print(f"  节点{i+1}是地面站: id={gst_id}")
-                
-                # 检查gst_positions是否已初始化
-                if not hasattr(self, 'gst_positions') or len(self.gst_positions) == 0:
-                    print(f"  错误: gst_positions未初始化或为空")
-                    return
-                
-                if gst_id < len(self.gst_positions):
-                    pos = self.gst_positions[gst_id]
-                    print(f"  地面站位置: x={pos['x']}, y={pos['y']}, z={pos['z']}")
-                    points.InsertNextPoint(pos["x"], pos["y"], pos["z"])
-                    valid_points += 1
-                else:
-                    print(f"  错误: 无法获取地面站位置: id={gst_id}, 地面站总数={len(self.gst_positions)}")
-                    return
-        
-        print(f"成功添加了{valid_points}个有效点")
-        
-        # 创建路径线段
-        for i in range(len(path_nodes) - 1):
-            line = vtk.vtkLine()
-            line.GetPointIds().SetId(0, i)  # 起点
-            line.GetPointIds().SetId(1, i + 1)  # 终点
-            lines.InsertNextCell(line)
-        
-        # 创建多边形数据
-        polyData = vtk.vtkPolyData()
-        polyData.SetPoints(points)
-        polyData.SetLines(lines)
-        
-        # 创建管道（使路径更粗）
-        tubes = vtk.vtkTubeFilter()
-        tubes.SetInputData(polyData)
-        tubes.SetRadius(SRV6_ROUTE_PATH_WIDTH * 0.0001 * EARTH_RADIUS_M)  # 设置管道半径
-        tubes.SetNumberOfSides(8)  # 设置管道截面的边数
-        tubes.Update()
-        
-        # 创建映射器
-        mapper = vtk.vtkPolyDataMapper()
-        mapper.SetInputConnection(tubes.GetOutputPort())
-        
-        # 创建演员
-        actor = vtk.vtkActor()
-        actor.SetMapper(mapper)
-        
-        # 设置颜色和透明度
-        actor.GetProperty().SetColor(SRV6_ROUTE_PATH_COLOR)
-        actor.GetProperty().SetOpacity(SRV6_ROUTE_PATH_OPACITY)
-        
-        # 添加到渲染器
-        self.renderer.AddActor(actor)
-        
-        # 保存演员引用（用于后续移除）
-        if hasattr(self, 'srv6_route_path_actor') and self.srv6_route_path_actor:
-            self.renderer.RemoveActor(self.srv6_route_path_actor)
-        self.srv6_route_path_actor = actor
-        
-        # 创建箭头（表示路径方向）
-        self.srv6_route_arrows_actors = []
-        for i in range(len(path_nodes) - 1):
-            # 获取线段起点和终点
-            if i >= points.GetNumberOfPoints() - 1:
-                break
-                
-            p1 = [0, 0, 0]
-            p2 = [0, 0, 0]
-            points.GetPoint(i, p1)
-            points.GetPoint(i + 1, p2)
+                # 添加线段（除了最后一个点）
+                if i < len(node_positions) - 1:
+                    path_lines.InsertNextCell(2)
+                    path_lines.InsertCellPoint(i)
+                    path_lines.InsertCellPoint(i + 1)
             
-            # 计算线段中点（箭头位置）
-            mid_point = [(p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2, (p1[2] + p2[2]) / 2]
+            # 创建路径的PolyData
+            path_polydata = vtk.vtkPolyData()
+            path_polydata.SetPoints(path_points)
+            path_polydata.SetLines(path_lines)
             
-            # 计算线段方向
-            direction = [p2[0] - p1[0], p2[1] - p1[1], p2[2] - p1[2]]
+            # 创建路径的映射器
+            path_mapper = vtk.vtkPolyDataMapper()
+            path_mapper.SetInputData(path_polydata)
             
-            # 归一化方向向量
-            length = (direction[0]**2 + direction[1]**2 + direction[2]**2)**0.5
-            if length > 0:
-                direction = [d / length for d in direction]
-            
-            # 创建箭头源
-            arrow_source = vtk.vtkArrowSource()
-            arrow_source.SetTipResolution(16)
-            arrow_source.SetShaftResolution(16)
-            arrow_source.SetTipLength(0.3)  # 箭头头部长度比例
-            arrow_source.SetTipRadius(0.1)  # 箭头头部半径比例
-            
-            # 创建变换
-            transform = vtk.vtkTransform()
-            transform.Translate(mid_point)  # 移动到线段中点
-            
-            # 计算旋转角度和轴
-            # 默认箭头方向是(1,0,0)，需要旋转到线段方向
-            default_direction = [1, 0, 0]
-            
-            # 计算旋转轴（叉积）
-            axis = [0, 0, 0]
-            axis[0] = default_direction[1] * direction[2] - default_direction[2] * direction[1]
-            axis[1] = default_direction[2] * direction[0] - default_direction[0] * direction[2]
-            axis[2] = default_direction[0] * direction[1] - default_direction[1] * direction[0]
-            
-            # 计算旋转角度（点积）
-            dot_product = default_direction[0] * direction[0] + default_direction[1] * direction[1] + default_direction[2] * direction[2]
-            angle = math.acos(max(-1, min(1, dot_product))) * 180 / math.pi
-            
-            # 应用旋转
-            if abs(angle) > 0.001 and (axis[0]**2 + axis[1]**2 + axis[2]**2) > 0.001:
-                transform.RotateWXYZ(angle, axis[0], axis[1], axis[2])
-            
-            # 缩放箭头
-            arrow_scale = SRV6_ROUTE_PATH_ARROW_SIZE * 0.0001 * EARTH_RADIUS_M
-            transform.Scale(arrow_scale, arrow_scale, arrow_scale)
-            
-            # 创建变换过滤器
-            transform_filter = vtk.vtkTransformPolyDataFilter()
-            transform_filter.SetInputConnection(arrow_source.GetOutputPort())
-            transform_filter.SetTransform(transform)
-            transform_filter.Update()
-            
-            # 创建映射器
-            arrow_mapper = vtk.vtkPolyDataMapper()
-            arrow_mapper.SetInputConnection(transform_filter.GetOutputPort())
-            
-            # 创建演员
-            arrow_actor = vtk.vtkActor()
-            arrow_actor.SetMapper(arrow_mapper)
-            
-            # 设置颜色和透明度
-            arrow_actor.GetProperty().SetColor(SRV6_ROUTE_PATH_COLOR)
-            arrow_actor.GetProperty().SetOpacity(SRV6_ROUTE_PATH_OPACITY)
+            # 创建路径的演员
+            self.srv6_route_path_actor = vtk.vtkActor()
+            self.srv6_route_path_actor.SetMapper(path_mapper)
+            self.srv6_route_path_actor.GetProperty().SetColor(SRV6_ROUTE_PATH_COLOR)
+            self.srv6_route_path_actor.GetProperty().SetOpacity(SRV6_ROUTE_PATH_OPACITY)
+            self.srv6_route_path_actor.GetProperty().SetLineWidth(SRV6_ROUTE_PATH_WIDTH)
             
             # 添加到渲染器
-            self.renderer.AddActor(arrow_actor)
+            try:
+                # 检查渲染器和路径演员是否为空
+                if not self.renderer:
+                    print("错误: 渲染器为空，无法添加SRv6路由路径")
+                    return
+                    
+                if not self.srv6_route_path_actor:
+                    print("错误: SRv6路由路径演员为空，无法添加到渲染器")
+                    return
+                    
+                # 尝试添加演员到渲染器
+                try:
+                    self.renderer.AddActor(self.srv6_route_path_actor)
+                    print("SRv6路由路径已添加到渲染器")
+                except Exception as e:
+                    print(f"添加SRv6路由路径到渲染器时出错: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    # 清理资源
+                    self.srv6_route_path_actor = None
+                    return
+            except Exception as e:
+                print(f"处理SRv6路由路径渲染器添加时出错: {e}")
+                import traceback
+                traceback.print_exc()
+                # 确保清理资源
+                if hasattr(self, 'srv6_route_path_actor') and self.srv6_route_path_actor:
+                    try:
+                        self.renderer.RemoveActor(self.srv6_route_path_actor)
+                    except:
+                        pass
+                    self.srv6_route_path_actor = None
+        except Exception as e:
+            print(f"显示SRv6路由路径时出错: {e}")
+            import traceback
+            traceback.print_exc()
+            # 确保清理任何可能创建的资源
+            if hasattr(self, 'srv6_route_path_actor') and self.srv6_route_path_actor:
+                try:
+                    self.renderer.RemoveActor(self.srv6_route_path_actor)
+                except:
+                    pass
+                self.srv6_route_path_actor = None
+        
+        # 更新渲染
+        try:
+            if not hasattr(self, 'renderWindow') or not self.renderWindow:
+                print("错误: renderWindow未初始化，无法更新渲染")
+                return
+                
+            # 使用多种方法尝试更新渲染窗口
+            render_success = False
             
-            # 保存箭头演员引用
-            self.srv6_route_arrows_actors.append(arrow_actor)
+            # 方法1: 使用Render()
+            try:
+                self.renderWindow.Render()
+                print("渲染窗口已更新(Render)")
+                render_success = True
+            except Exception as e:
+                print(f"调用renderWindow.Render()时出错: {e}")
+                import traceback
+                traceback.print_exc()
+                
+                # 方法2: 使用Modified()
+                if not render_success:
+                    try:
+                        self.renderWindow.Modified()
+                        print("使用Modified()方法更新渲染窗口")
+                        render_success = True
+                    except Exception as e2:
+                        print(f"调用renderWindow.Modified()时出错: {e2}")
+                        
+                        # 方法3: 使用renderWindowInteractor
+                        if not render_success and hasattr(self, 'renderWindowInteractor') and self.renderWindowInteractor:
+                            try:
+                                self.renderWindowInteractor.Render()
+                                print("使用renderWindowInteractor.Render()方法更新渲染窗口")
+                                render_success = True
+                            except Exception as e3:
+                                print(f"调用renderWindowInteractor.Render()时出错: {e3}")
+                                
+                                # 方法4: 使用ResetCamera()
+                                if not render_success and hasattr(self, 'renderer') and self.renderer:
+                                    try:
+                                        self.renderer.ResetCamera()
+                                        self.renderWindow.Render()
+                                        print("使用ResetCamera()后Render()方法更新渲染窗口")
+                                        render_success = True
+                                    except Exception as e4:
+                                        print(f"尝试所有渲染方法均失败: {e4}")
+            
+            if not render_success:
+                print("警告: 所有渲染更新方法均失败，可能会导致显示问题")
+        except Exception as e:
+            print(f"更新渲染窗口过程中出错: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        # 初始化箭头演员列表（但不创建箭头）
+        self.srv6_route_arrows_actors = []
