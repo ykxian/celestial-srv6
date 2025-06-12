@@ -131,7 +131,7 @@ class SRv6RouteHandler(BaseHTTPRequestHandler):
             
             try:
                 route_data = json.loads(post_data.decode('utf-8'))
-                logger.info(f"接收到路由数据: {route_data['source']} -> {route_data['destination']}")
+                # logger.info(f"接收到路由数据: {route_data['source']} -> {route_data['destination']}")
                 
                 # 解析路由数据
                 srv6_route = SRv6RouteData(route_data)
@@ -172,13 +172,13 @@ class SRv6RouteHandler(BaseHTTPRequestHandler):
                         }
                         
                         # 发送到动画进程前记录详细信息
-                        logger.info(f"准备发送路由数据到动画进程，详细信息: {json.dumps(route_msg)}")
+                        # logger.info(f"准备发送路由数据到动画进程，详细信息: {json.dumps(route_msg)}")
                         try:
                             
                             # 直接使用获取到的连接对象发送消息
                             animation_conn.send(route_msg)
                             
-                            logger.info(f"已成功发送路由数据到动画进程: {source_shell}/{source_id} -> {target_shell}/{target_id}")
+                            # logger.info(f"已成功发送路由数据到动画进程: {source_shell}/{source_id} -> {target_shell}/{target_id}")
                             # 发送后等待一小段时间，确保消息被处理
                             time.sleep(0.1)
                         except Exception as e:
