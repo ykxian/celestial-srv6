@@ -153,6 +153,10 @@ class Animation:
         self.gst_num = len(self.gst_positions)
 
         self.lock = threading.Lock()
+        
+        # 初始化消息队列和锁
+        self.message_queue = []
+        self.message_queue_lock = threading.Lock()
 
         # 先启动控制线程，确保能接收消息
         self.controlThread = threading.Thread(target=self.controlThreadHandler)
@@ -179,8 +183,44 @@ class Animation:
         :param obj: The object that generated the event, probably vtk render window.
         :param event: The event that triggered this function.
         """
+        # 处理消息队列中的消息
+        self.processMessageQueue()
+        
         with self.lock:
             self.updateAnimation(obj, event)
+            
+    def processMessageQueue(self) -> None:
+        """处理消息队列中的消息"""
+        try:
+            with self.message_queue_lock:
+                if not self.message_queue:
+                    return
+                
+                # 处理队列中的所有消息
+                messages = self.message_queue.copy()
+                self.message_queue.clear()
+            
+            # 在锁外处理消息，避免长时间持有锁
+            for message in messages:
+                msg_type = message.get("type")
+                
+                if msg_type == "srv6_route":
+                    path_nodes = message.get("path_nodes")
+                    if path_nodes:
+                        print(f"从消息队列处理SRv6路由路径显示，共{len(path_nodes)}个节点")
+                        self.displayRoutePath(path_nodes)
+                
+                elif msg_type == "clear_route":
+                    print("从消息队列处理清除路由路径操作")
+                    self._clearRoutePathImpl()
+                    
+                elif msg_type == "clear_srv6_route":
+                    print("从消息队列处理清除SRv6路由路径操作")
+                    self._clearSRv6RoutePathImpl()
+        except Exception as e:
+            print(f"处理消息队列时出错: {e}")
+            import traceback
+            traceback.print_exc()
 
     def updateAnimation(self, obj: typing.Any, event: typing.Any) -> None:
         """
@@ -597,15 +637,18 @@ class Animation:
                 print("没有足够的有效节点位置来显示路径")
                 return
             
-            # 添加路径点和线段
-            for i, pos in enumerate(node_positions):
+            # 添加路径点
+            for pos in node_positions:
                 path_points.InsertNextPoint(pos[0], pos[1], pos[2])
-                
-                # 添加线段（除了最后一个点）
-                if i < len(node_positions) - 1:
-                    path_lines.InsertNextCell(2)
-                    path_lines.InsertCellPoint(i)
-                    path_lines.InsertCellPoint(i + 1)
+            
+            # 创建一条连续的折线
+            polyLine = vtk.vtkPolyLine()
+            polyLine.GetPointIds().SetNumberOfIds(len(node_positions))
+            for i in range(len(node_positions)):
+                polyLine.GetPointIds().SetId(i, i)
+            
+            # 添加折线到单元格
+            path_lines.InsertNextCell(polyLine)
                     
                     # 移除了箭头渲染代码，只保留路径线段
             
@@ -1042,35 +1085,15 @@ class Animation:
                                     continue
                         
                         
-                        # 清除之前的SRv6路由路径
+                        # 清除之前的SRv6路由路径和箭头
                         try:
-                            if hasattr(self, 'srv6_route_path_actor') and self.srv6_route_path_actor:
-                                try:
-                                    self.renderer.RemoveActor(self.srv6_route_path_actor)
-                                    self.srv6_route_path_actor = None
-                                    print("已清除之前的SRv6路由路径")
-                                except Exception as e:
-                                    print(f"清除之前的SRv6路由路径时出错: {e}")
-                                    import traceback
-                                    traceback.print_exc()
+                            print("准备清除之前的SRv6路由路径和箭头")
+                            self.clearSRv6RoutePath()
+                            print("已清除之前的SRv6路由路径和箭头")
                         except Exception as e:
-                            print(f"处理SRv6路由路径清除时出错: {e}")
-                            
-                        # 清除之前的SRv6路由箭头
-                        try:
-                            if hasattr(self, 'srv6_route_arrows_actors'):
-                                try:
-                                    for arrow_actor in self.srv6_route_arrows_actors:
-                                        if arrow_actor:
-                                            self.renderer.RemoveActor(arrow_actor)
-                                    self.srv6_route_arrows_actors = []
-                                    print("已清除之前的SRv6路由箭头")
-                                except Exception as e:
-                                    print(f"清除之前的SRv6路由箭头时出错: {e}")
-                                    import traceback
-                                    traceback.print_exc()
-                        except Exception as e:
-                            print(f"处理SRv6路由箭头清除时出错: {e}")
+                            print(f"清除之前的SRv6路由路径和箭头时出错: {e}")
+                            import traceback
+                            traceback.print_exc()
                         
                         # 检查路径节点是否有效
                         display_path = True
@@ -1092,30 +1115,17 @@ class Animation:
                         
                         # 显示SRv6路由路径（使用蓝色）
                         if display_path:
-                            print(f"准备显示SRv6路由路径，共{len(path_nodes)}个节点")
+                            print(f"准备将SRv6路由路径添加到消息队列，共{len(path_nodes)}个节点")
                             try:
-                                self.displaySRv6RoutePath(path_nodes)
-                                print(f"已显示SRv6路由路径，共{len(path_nodes)}个节点")
-                                # 强制更新渲染窗口
-                                try:
-                                    if hasattr(self, 'renderWindow') and self.renderWindow:
-                                        try:
-                                            self.renderWindow.Render()
-                                            print("已强制更新渲染窗口")
-                                        except Exception as e:
-                                            print(f"强制更新渲染窗口时出错: {e}")
-                                            import traceback
-                                            traceback.print_exc()
-                                            # 尝试使用替代方法更新渲染
-                                            try:
-                                                self.renderWindow.Modified()
-                                                print("使用Modified()方法更新渲染窗口")
-                                            except Exception as e2:
-                                                print(f"尝试替代渲染方法时出错: {e2}")
-                                except Exception as e:
-                                    print(f"处理渲染窗口更新时出错: {e}")
+                                # 将路由路径消息添加到队列，而不是直接调用displaySRv6RoutePath
+                                with self.message_queue_lock:
+                                    self.message_queue.append({
+                                        "type": "srv6_route",
+                                        "path_nodes": path_nodes
+                                    })
+                                print(f"已将SRv6路由路径添加到消息队列，共{len(path_nodes)}个节点")
                             except Exception as e:
-                                print(f"调用displaySRv6RoutePath时出错: {e}")
+                                print(f"将SRv6路由路径添加到消息队列时出错: {e}")
                                 import traceback
                                 traceback.print_exc()
                         else:
@@ -1243,6 +1253,26 @@ class Animation:
             
     def clearRoutePath(self) -> None:
         """清除路由路径显示和选择"""
+        # 检查是否在主线程中调用
+        if threading.current_thread() is threading.main_thread():
+            # 在主线程中直接执行清除操作
+            self._clearRoutePathImpl()
+        else:
+            # 在非主线程中，将清除操作添加到消息队列
+            print("将清除路由路径操作添加到消息队列")
+            try:
+                with self.message_queue_lock:
+                    self.message_queue.append({
+                        "type": "clear_route"
+                    })
+                print("已将清除路由路径操作添加到消息队列")
+            except Exception as e:
+                print(f"将清除路由路径操作添加到消息队列时出错: {e}")
+                import traceback
+                traceback.print_exc()
+    
+    def _clearRoutePathImpl(self) -> None:
+        """清除路由路径显示和选择的实际实现"""
         # 删除路径显示器
         if hasattr(self, 'route_path_actor') and self.route_path_actor:
             self.renderer.RemoveActor(self.route_path_actor)
@@ -1311,6 +1341,96 @@ class Animation:
         
         :param path_nodes: 路径节点列表，包含从源到目标的所有节点全局索引
         """
+        # 检查是否在主线程中调用
+        if threading.current_thread() is threading.main_thread():
+            # 在主线程中直接执行显示操作
+            self.displayRoutePath(path_nodes)
+        else:
+            # 在非主线程中，将显示操作添加到消息队列
+            print("将SRv6路由路径显示操作添加到消息队列")
+            try:
+                with self.message_queue_lock:
+                    self.message_queue.append({
+                        "type": "srv6_route",
+                        "path_nodes": path_nodes
+                    })
+                print(f"已将SRv6路由路径显示操作添加到消息队列，共{len(path_nodes)}个节点")
+            except Exception as e:
+                print(f"将SRv6路由路径显示操作添加到消息队列时出错: {e}")
+                import traceback
+                traceback.print_exc()
+    
+    def clearSRv6RoutePath(self) -> None:
+        """清除SRv6路由路径显示和箭头"""
+        # 检查是否在主线程中调用
+        if threading.current_thread() is threading.main_thread():
+            # 在主线程中直接执行清除操作
+            self._clearSRv6RoutePathImpl()
+        else:
+            # 在非主线程中，将清除操作添加到消息队列
+            print("将清除SRv6路由路径操作添加到消息队列")
+            try:
+                with self.message_queue_lock:
+                    self.message_queue.append({
+                        "type": "clear_srv6_route"
+                    })
+                print("已将清除SRv6路由路径操作添加到消息队列")
+            except Exception as e:
+                print(f"将清除SRv6路由路径操作添加到消息队列时出错: {e}")
+                import traceback
+                traceback.print_exc()
+    
+    def _clearSRv6RoutePathImpl(self) -> None:
+        """清除SRv6路由路径显示和箭头的实际实现"""
+        try:
+            # 删除SRv6路径显示器
+            if hasattr(self, 'srv6_route_path_actor') and self.srv6_route_path_actor:
+                try:
+                    self.renderer.RemoveActor(self.srv6_route_path_actor)
+                    print("已清除SRv6路由路径")
+                except Exception as e:
+                    print(f"清除SRv6路由路径时出错: {e}")
+                self.srv6_route_path_actor = None
+                
+            # 清除SRv6箭头
+            if hasattr(self, 'srv6_route_arrows_actors'):
+                try:
+                    for arrow_actor in self.srv6_route_arrows_actors:
+                        if arrow_actor:
+                            self.renderer.RemoveActor(arrow_actor)
+                    print("已清除SRv6路由箭头")
+                except Exception as e:
+                    print(f"清除SRv6路由箭头时出错: {e}")
+                self.srv6_route_arrows_actors = []
+            
+            # 清除当前路径节点
+            if hasattr(self, 'current_srv6_path_nodes'):
+                self.current_srv6_path_nodes = []
+            
+            # 更新渲染窗口
+            try:
+                if hasattr(self, 'renderWindow') and self.renderWindow:
+                    self.renderWindow.Render()
+                    print("渲染窗口已更新")
+            except Exception as e:
+                print(f"更新渲染窗口时出错: {e}")
+                try:
+                    if hasattr(self, 'renderWindow') and self.renderWindow:
+                        self.renderWindow.Modified()
+                except Exception as e2:
+                    print(f"使用Modified()更新渲染窗口时出错: {e2}")
+            
+            print("SRv6路由路径清除完成")
+        except Exception as e:
+            print(f"清除SRv6路由路径时出错: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def _displaySRv6RoutePathImpl(self, path_nodes: list) -> None:
+        """显示SRv6路由路径的实际实现（使用蓝色）
+        
+        :param path_nodes: 路径节点列表，包含从源到目标的所有节点全局索引
+        """
         try:
             if not path_nodes or len(path_nodes) < 2:
                 print("SRv6路径节点不足，无法显示路径")
@@ -1328,6 +1448,11 @@ class Animation:
                 if path_nodes[-1] not in selected_nodes:
                     selected_nodes.append(path_nodes[-1])  # 终点
                 path_nodes = selected_nodes
+            
+            print("\n======== SRv6路由路径节点详细信息 ========")
+            print(f"路径节点列表: {path_nodes}")
+            print(f"卫星总数: {sum(self.shell_sats) if hasattr(self, 'shell_sats') else 0}, 地面站总数: {len(self.gst_positions) if hasattr(self, 'gst_positions') else 0}")
+            print(f"shell_sats配置: {self.shell_sats if hasattr(self, 'shell_sats') else '未初始化'}")
             
             # 清除现有SRv6路由路径
             if hasattr(self, 'srv6_route_path_actor') and self.srv6_route_path_actor:
@@ -1520,16 +1645,32 @@ class Animation:
                 return
             
             print(f"成功获取到 {len(node_positions)}/{len(path_nodes)} 个节点的位置")
-            
-            # 添加路径点和线段
+            print("\n======== 节点位置详情 ========")
             for i, pos in enumerate(node_positions):
+                print(f"节点[{i}]: 位置=({pos[0]:.2f}, {pos[1]:.2f}, {pos[2]:.2f})")
+            
+            # 检查节点位置是否有效（不是NaN或无穷大）
+            has_invalid_pos = False
+            for i, pos in enumerate(node_positions):
+                if any(math.isnan(p) or math.isinf(p) for p in pos):
+                    print(f"警告: 节点[{i}]位置包含NaN或无穷大值: {pos}")
+                    has_invalid_pos = True
+            
+            if has_invalid_pos:
+                print("警告: 存在无效的节点位置，可能导致渲染问题")
+            
+            # 添加路径点
+            for pos in node_positions:
                 path_points.InsertNextPoint(pos[0], pos[1], pos[2])
-                
-                # 添加线段（除了最后一个点）
-                if i < len(node_positions) - 1:
-                    path_lines.InsertNextCell(2)
-                    path_lines.InsertCellPoint(i)
-                    path_lines.InsertCellPoint(i + 1)
+            
+            # 创建一条连续的折线
+            polyLine = vtk.vtkPolyLine()
+            polyLine.GetPointIds().SetNumberOfIds(len(node_positions))
+            for i in range(len(node_positions)):
+                polyLine.GetPointIds().SetId(i, i)
+            
+            # 添加折线到单元格
+            path_lines.InsertNextCell(polyLine)
             
             # 创建路径的PolyData
             path_polydata = vtk.vtkPolyData()
@@ -1546,6 +1687,16 @@ class Animation:
             self.srv6_route_path_actor.GetProperty().SetColor(SRV6_ROUTE_PATH_COLOR)
             self.srv6_route_path_actor.GetProperty().SetOpacity(SRV6_ROUTE_PATH_OPACITY)
             self.srv6_route_path_actor.GetProperty().SetLineWidth(SRV6_ROUTE_PATH_WIDTH)
+            # 确保路径可见
+            self.srv6_route_path_actor.VisibilityOn()
+            # 设置渲染优先级，确保路径在其他对象之上
+            self.srv6_route_path_actor.SetPickable(1)
+            self.srv6_route_path_actor.SetDragable(1)
+            # 设置Z顺序，确保路径显示在其他对象之上
+            self.srv6_route_path_actor.ForceOpaqueOn()
+            # 提高渲染优先级
+            self.srv6_route_path_actor.GetProperty().SetRepresentationToWireframe()
+            self.srv6_route_path_actor.GetProperty().SetRenderLinesAsTubes(1)
             
             # 添加到渲染器
             try:
@@ -1598,6 +1749,30 @@ class Animation:
                 print("错误: renderWindow未初始化，无法更新渲染")
                 return
                 
+            # 检查路径演员的可见性和属性
+            if hasattr(self, 'srv6_route_path_actor') and self.srv6_route_path_actor:
+                print("\n======== SRv6路径演员属性 ========")
+                print(f"可见性: {self.srv6_route_path_actor.GetVisibility()}")
+                print(f"颜色: {self.srv6_route_path_actor.GetProperty().GetColor()}")
+                print(f"不透明度: {self.srv6_route_path_actor.GetProperty().GetOpacity()}")
+                print(f"线宽: {self.srv6_route_path_actor.GetProperty().GetLineWidth()}")
+                print(f"渲染为管道: {self.srv6_route_path_actor.GetProperty().GetRenderLinesAsTubes()}")
+                print(f"Z顺序强制不透明: {self.srv6_route_path_actor.GetForceOpaque()}")
+                
+                # 检查路径数据
+                mapper = self.srv6_route_path_actor.GetMapper()
+                if mapper:
+                    polydata = mapper.GetInput()
+                    if polydata:
+                        print(f"路径点数: {polydata.GetNumberOfPoints()}")
+                        print(f"路径线数: {polydata.GetNumberOfLines()}")
+                    else:
+                        print("警告: 路径映射器没有输入数据")
+                else:
+                    print("警告: 路径演员没有映射器")
+            else:
+                print("警告: SRv6路径演员未创建或为空")
+                
             # 使用多种方法尝试更新渲染窗口
             render_success = False
             
@@ -1610,34 +1785,34 @@ class Animation:
                 print(f"调用renderWindow.Render()时出错: {e}")
                 import traceback
                 traceback.print_exc()
-                
-                # 方法2: 使用Modified()
-                if not render_success:
-                    try:
-                        self.renderWindow.Modified()
-                        print("使用Modified()方法更新渲染窗口")
-                        render_success = True
-                    except Exception as e2:
-                        print(f"调用renderWindow.Modified()时出错: {e2}")
-                        
-                        # 方法3: 使用renderWindowInteractor
-                        if not render_success and hasattr(self, 'renderWindowInteractor') and self.renderWindowInteractor:
-                            try:
-                                self.renderWindowInteractor.Render()
-                                print("使用renderWindowInteractor.Render()方法更新渲染窗口")
-                                render_success = True
-                            except Exception as e3:
-                                print(f"调用renderWindowInteractor.Render()时出错: {e3}")
-                                
-                                # 方法4: 使用ResetCamera()
-                                if not render_success and hasattr(self, 'renderer') and self.renderer:
-                                    try:
-                                        self.renderer.ResetCamera()
-                                        self.renderWindow.Render()
-                                        print("使用ResetCamera()后Render()方法更新渲染窗口")
-                                        render_success = True
-                                    except Exception as e4:
-                                        print(f"尝试所有渲染方法均失败: {e4}")
+            
+            # 方法2: 使用Modified()
+            if not render_success:
+                try:
+                    self.renderWindow.Modified()
+                    print("使用Modified()方法更新渲染窗口")
+                    render_success = True
+                except Exception as e2:
+                    print(f"调用renderWindow.Modified()时出错: {e2}")
+            
+            # 方法3: 使用renderWindowInteractor
+            if not render_success and hasattr(self, 'renderWindowInteractor') and self.renderWindowInteractor:
+                try:
+                    self.renderWindowInteractor.Render()
+                    print("使用renderWindowInteractor.Render()方法更新渲染窗口")
+                    render_success = True
+                except Exception as e3:
+                    print(f"调用renderWindowInteractor.Render()时出错: {e3}")
+            
+            # 方法4: 使用ResetCamera()
+            if not render_success and hasattr(self, 'renderer') and self.renderer:
+                try:
+                    self.renderer.ResetCamera()
+                    self.renderWindow.Render()
+                    print("使用ResetCamera()后Render()方法更新渲染窗口")
+                    render_success = True
+                except Exception as e4:
+                    print(f"尝试所有渲染方法均失败: {e4}")
             
             if not render_success:
                 print("警告: 所有渲染更新方法均失败，可能会导致显示问题")
@@ -1648,3 +1823,13 @@ class Animation:
         
         # 初始化箭头演员列表（但不创建箭头）
         self.srv6_route_arrows_actors = []
+        
+        # 强制更新渲染窗口
+        try:
+            if hasattr(self, 'interactor') and self.interactor:
+                self.interactor.Render()
+                print("使用interactor.Render()强制更新渲染窗口")
+        except Exception as e:
+            print(f"强制更新渲染窗口时出错: {e}")
+            import traceback
+            traceback.print_exc()
