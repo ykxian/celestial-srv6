@@ -209,6 +209,8 @@ class Animation:
                     if path_nodes:
                         print(f"从消息队列处理SRv6路由路径显示，共{len(path_nodes)}个节点")
                         self.displayRoutePath(path_nodes)
+                        # 保存当前SRv6路径节点，用于后续更新
+                        self.current_srv6_path_nodes = path_nodes
                 
                 elif msg_type == "clear_route":
                     print("从消息队列处理清除路由路径操作")
@@ -306,6 +308,11 @@ class Animation:
                 # 如果有旧的演员，移除它
                 if old_actor:
                     self.renderer.RemoveActor(old_actor)
+        
+        # 如果存在SRv6路由路径，也更新它
+        if hasattr(self, 'current_srv6_path_nodes') and self.current_srv6_path_nodes:
+            # 每帧都重新显示SRv6路径，确保路径随着卫星移动而更新
+            self.displayRoutePath(self.current_srv6_path_nodes)
 
         # 更新计数器
         self.frameCount += 1
@@ -649,9 +656,7 @@ class Animation:
             
             # 添加折线到单元格
             path_lines.InsertNextCell(polyLine)
-                    
-                    # 移除了箭头渲染代码，只保留路径线段
-            
+                                
             # 创建路径的PolyData
             path_polydata = vtk.vtkPolyData()
             path_polydata.SetPoints(path_points)
@@ -1314,6 +1319,8 @@ class Animation:
         if threading.current_thread() is threading.main_thread():
             # 在主线程中直接执行显示操作
             self.displayRoutePath(path_nodes)
+            # 保存当前SRv6路径节点，用于后续更新
+            self.current_srv6_path_nodes = path_nodes
         else:
             # 在非主线程中，将显示操作添加到消息队列
             print("将SRv6路由路径显示操作添加到消息队列")
