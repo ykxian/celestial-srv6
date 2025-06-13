@@ -312,7 +312,7 @@ class Animation:
         # 如果存在SRv6路由路径，也更新它
         if hasattr(self, 'current_srv6_path_nodes') and self.current_srv6_path_nodes:
             # 每帧都重新显示SRv6路径，确保路径随着卫星移动而更新
-            self.displayRoutePath(self.current_srv6_path_nodes)
+            self.displayRoutePath(self.current_srv6_path_nodes, is_srv6=True)
 
         # 更新计数器
         self.frameCount += 1
@@ -671,14 +671,31 @@ class Animation:
             path_mapper.SetInputData(path_polydata)
             
             # 创建路径的演员
-            self.route_path_actor = vtk.vtkActor()
-            self.route_path_actor.SetMapper(path_mapper)
-            self.route_path_actor.GetProperty().SetColor(ROUTE_PATH_COLOR)
-            self.route_path_actor.GetProperty().SetOpacity(ROUTE_PATH_OPACITY)
-            self.route_path_actor.GetProperty().SetLineWidth(ROUTE_PATH_WIDTH)
-            
-            # 添加到渲染器
-            self.renderer.AddActor(self.route_path_actor)
+            if is_srv6:
+                # 清除现有SRv6路径
+                if hasattr(self, 'srv6_route_path_actor') and self.srv6_route_path_actor:
+                    self.renderer.RemoveActor(self.srv6_route_path_actor)
+                    self.srv6_route_path_actor = None
+                
+                # 创建SRv6路径演员
+                self.srv6_route_path_actor = vtk.vtkActor()
+                self.srv6_route_path_actor.SetMapper(path_mapper)
+                self.srv6_route_path_actor.GetProperty().SetColor(SRV6_ROUTE_PATH_COLOR)
+                self.srv6_route_path_actor.GetProperty().SetOpacity(SRV6_ROUTE_PATH_OPACITY)
+                self.srv6_route_path_actor.GetProperty().SetLineWidth(SRV6_ROUTE_PATH_WIDTH)
+                
+                # 添加到渲染器
+                self.renderer.AddActor(self.srv6_route_path_actor)
+            else:
+                # 创建普通路径演员
+                self.route_path_actor = vtk.vtkActor()
+                self.route_path_actor.SetMapper(path_mapper)
+                self.route_path_actor.GetProperty().SetColor(ROUTE_PATH_COLOR)
+                self.route_path_actor.GetProperty().SetOpacity(ROUTE_PATH_OPACITY)
+                self.route_path_actor.GetProperty().SetLineWidth(ROUTE_PATH_WIDTH)
+                
+                # 添加到渲染器
+                self.renderer.AddActor(self.route_path_actor)
         except Exception as e:
             print(f"显示路由路径时出错: {e}")
         
