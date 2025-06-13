@@ -208,7 +208,7 @@ class Animation:
                     path_nodes = message.get("path_nodes")
                     if path_nodes:
                         print(f"从消息队列处理SRv6路由路径显示，共{len(path_nodes)}个节点")
-                        self.displayRoutePath(path_nodes)
+                        self.displayRoutePath(path_nodes, is_srv6=True)
                         # 保存当前SRv6路径节点，用于后续更新
                         self.current_srv6_path_nodes = path_nodes
                 
@@ -553,10 +553,11 @@ class Animation:
             traceback.print_exc()
             self.route_request_pending = False
 
-    def displayRoutePath(self, path_nodes):
+    def displayRoutePath(self, path_nodes, is_srv6=False):
         """显示路由路径
         
         :param path_nodes: 路径节点列表，包含从源到目标的所有节点全局索引
+        :param is_srv6: 是否为SRv6路由路径，默认为False
         """
         try:
             if not path_nodes or len(path_nodes) < 2:
@@ -564,7 +565,10 @@ class Animation:
                 return
                 
             # 保存当前路径节点，用于后续更新
-            self.current_path_nodes = path_nodes
+            if is_srv6:
+                self.current_srv6_path_nodes = path_nodes
+            else:
+                self.current_path_nodes = path_nodes
             
             # 限制路径节点数量，防止过长路径导致性能问题
             max_path_nodes = 20  # 最大路径节点数
@@ -1318,7 +1322,7 @@ class Animation:
         # 检查是否在主线程中调用
         if threading.current_thread() is threading.main_thread():
             # 在主线程中直接执行显示操作
-            self.displayRoutePath(path_nodes)
+            self.displayRoutePath(path_nodes, is_srv6=True)
             # 保存当前SRv6路径节点，用于后续更新
             self.current_srv6_path_nodes = path_nodes
         else:

@@ -364,7 +364,7 @@ class AnimationUI:
         """设置点击拾取器"""
         # 使用vtkCellPicker代替vtkPropPicker，更适合检测网格和单元格
         picker = vtk.vtkCellPicker()
-        picker.SetTolerance(0.05)  # 保持原有容差设置
+        picker.SetTolerance(0.005)  # 保持原有容差设置
         self.interactor.SetPicker(picker)
 
         # 添加点击事件回调
@@ -384,6 +384,11 @@ class AnimationUI:
             # 因为animation.py中没有代理方法调用回ui.handleKeyPress
             self.animation.clearRoutePath()
             print("路由路径选择已重置")
+        # 数字键2：清除SRv6路由路径
+        elif key == "2":
+            # 清除SRv6路由路径
+            self.animation.clearSRv6RoutePath()
+            print("SRv6路由路径已清除")
             
     def handleClick(self, obj: typing.Any, event: typing.Any) -> None:
         """处理鼠标点击事件"""
